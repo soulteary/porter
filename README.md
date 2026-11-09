@@ -207,7 +207,9 @@ environment variables remain supported. No request logging or trace propagation
 is enabled, and redirects are rejected on all paths.
 
 Authorization-code exchanges use a separate HTTP/1.1 transport with connection
-reuse disabled. Porter does not invoke kit retries or OAuth authentication-style
+reuse disabled, with an explicit HTTP/1-only protocol set. Unknown transport
+wrappers are rejected for exchanges because their retry policy cannot be verified.
+Porter does not invoke kit retries or OAuth authentication-style
 auto-detection. This also prevents standard-library replay on reused connections
 or HTTP/2 streams: WeChat and QQ exchange one-use codes using GET, which must
 not be treated as a replayable identity read. An ambiguous failure requires a

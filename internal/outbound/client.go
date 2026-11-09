@@ -4,6 +4,7 @@ package outbound
 
 import (
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"time"
@@ -48,14 +49,25 @@ func Exchange(source *http.Client) *http.Client {
 	if standard, ok := transport.(*http.Transport); ok {
 		single := standard.Clone()
 		single.DisableKeepAlives = true
+		single.Protocols = new(http.Protocols)
+		single.Protocols.SetHTTP1(true)
 		single.ForceAttemptHTTP2 = false
 		single.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 		if single.TLSClientConfig != nil {
 			single.TLSClientConfig.NextProtos = []string{"http/1.1"}
 		}
 		copy.Transport = single
+	} else {
+		// A wrapper may retry inside RoundTrip; no client option can prevent that.
+		// Fail closed instead of delegating a one-use code to an unknown transport.
+		copy.Transport = rejectedExchangeTransport{}
 	}
-	// Custom RoundTrippers are used by protocol tests. Production transports are
-	// constructed by New; custom implementations must themselves avoid retries.
+	copy.Jar = nil // Exchanges do not inherit ambient browser/cookie state.
 	return &copy
+}
+
+type rejectedExchangeTransport struct{}
+
+func (rejectedExchangeTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unsupported authorization exchange transport")
 }

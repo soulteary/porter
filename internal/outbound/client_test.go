@@ -95,6 +95,11 @@ func TestExchangeDoesNotNegotiateHTTP2OrReuseConnections(t *testing.T) {
 	defer server.Close()
 	pooled := server.Client()
 	pooled.Timeout = time.Second
+	// Explicit protocol selection overrides ForceAttemptHTTP2 and TLSNextProto
+	// in current Go releases; the exchange client must replace it as well.
+	pooled.Transport.(*http.Transport).Protocols = new(http.Protocols)
+	pooled.Transport.(*http.Transport).Protocols.SetHTTP1(true)
+	pooled.Transport.(*http.Transport).Protocols.SetHTTP2(true)
 	defer pooled.CloseIdleConnections()
 	resp, err := pooled.Get(server.URL)
 	if err != nil {
@@ -115,5 +120,28 @@ func TestExchangeDoesNotNegotiateHTTP2OrReuseConnections(t *testing.T) {
 		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
+	}
+}
+
+type retryingTransport struct{ calls atomic.Int32 }
+
+func (r *retryingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	r.calls.Add(1)
+	return nil, context.DeadlineExceeded
+}
+func TestExchangeRejectsUnknownTransports(t *testing.T) {
+	transport := &retryingTransport{}
+	source := &http.Client{Transport: transport, Timeout: time.Second}
+	client := Exchange(source)
+	req, _ := http.NewRequest("GET", "https://example.test/token?code=SECRET", nil)
+	if resp, err := client.Do(req); err == nil {
+		resp.Body.Close()
+		t.Fatal("unknown transport accepted")
+	}
+	if transport.calls.Load() != 0 {
+		t.Fatal("exchange delegated to an unverified transport")
+	}
+	if source.Transport != transport {
+		t.Fatal("mutated caller transport")
 	}
 }

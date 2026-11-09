@@ -180,7 +180,7 @@ func (a *OAuth) exchangeClient() *http.Client {
 	if a.ExchangeClient != nil {
 		return a.ExchangeClient
 	}
-	return a.Client // Hand-constructed protocol fixtures.
+	return outbound.Exchange(a.Client) // Keep hand-constructed adapters fail-closed too.
 }
 func (a *OAuth) getJSON(ctx context.Context, endpoint, token string, out any) error {
 	return a.getJSONWith(ctx, a.Client, endpoint, token, out)
