@@ -160,3 +160,43 @@ func TestResolvedKeysKeepExistingTrustSeparation(t *testing.T) {
 		t.Fatal("management key reused proxy credential")
 	}
 }
+
+func TestProjectedSecretRotationRevalidatesTheOpenedTarget(t *testing.T) {
+	dir := t.TempDir()
+	old := strings.Repeat("o", 32)
+	next := strings.Repeat("n", 32)
+	a := secretFile(t, dir, "old", old, 0400)
+	b := secretFile(t, dir, "new", next, 0440)
+	link := filepath.Join(dir, "projected")
+	if err := os.Symlink(a, link); err != nil {
+		t.Fatal(err)
+	}
+	c := valid()
+	c.ProxyKey = ""
+	c.ProxyKeyFile = link
+	path := save(t, c, dir)
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(dir, "replacement")
+	if err = os.Symlink(b, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(replacement, link); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := Load(path)
+	if err != nil || loaded.ProxyKey != old || refreshed.ProxyKey != next {
+		t.Fatal("projected update changed a loaded key or was not resolved on restart", err)
+	}
+	if err = os.Chmod(b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Load(path); err == nil {
+		t.Fatal("new projected target permissions were not validated")
+	}
+	if loaded.ProxyKey != old || refreshed.ProxyKey != next {
+		t.Fatal("failed reload changed previously loaded credentials")
+	}
+}

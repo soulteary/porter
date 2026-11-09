@@ -226,3 +226,39 @@ func TestFileSecretRestartPreservesSessionAndPinsLoadedKey(t *testing.T) {
 		t.Fatal("restart revived revoked session", err)
 	}
 }
+
+func TestPartialSecretResolutionFailureDoesNotLeakEarlierSecrets(t *testing.T) {
+	c := configuration(t)
+	secret := c.ProxyKey
+	dir := filepath.Dir(c.Database)
+	c.ProxyKey = ""
+	c.ProxyKeyFile = "valid-proxy"
+	if err := os.WriteFile(filepath.Join(dir, c.ProxyKeyFile), []byte(secret), 0400); err != nil {
+		t.Fatal(err)
+	}
+	c.StargateURL = "https://stargate.test/_auth"
+	c.StargateSecretFile = "SECRET-missing-stargate"
+	path := writeConfig(t, c)
+	for _, command := range []string{"serve", "check-config", "doctor"} {
+		var out, logs bytes.Buffer
+		err := run(context.Background(), []string{command, "--config", path}, &out, &logs)
+		if err == nil {
+			t.Fatal("partially resolved configuration was accepted")
+		}
+		text := out.String() + logs.String() + err.Error()
+		for _, private := range []string{secret, "SECRET", dir} {
+			if strings.Contains(text, private) {
+				t.Fatal("partial resolution exposed a value or path", command)
+			}
+		}
+	}
+	var out, logs bytes.Buffer
+	if err := run(context.Background(), []string{"version", "--json", "--config", path}, &out, &logs); err != nil {
+		t.Fatal("version loaded secret files", err)
+	}
+	for _, path := range []string{c.Database, c.Operations.AuditFile} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("failed resolution initialized runtime state")
+		}
+	}
+}
