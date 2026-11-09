@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -202,7 +203,7 @@ func (r *Runtime) Handler(c config.Config, info *version.Info) http.Handler {
 		} else {
 			host, _, err := net.SplitHostPort(req.RemoteAddr)
 			ip := net.ParseIP(host)
-			if err != nil || ip == nil || !ip.IsLoopback() {
+			if err != nil || ip == nil || !ip.IsLoopback() || !loopbackHost(req.Host) {
 				http.Error(w, "loopback management access required", 403)
 				return
 			}
@@ -274,4 +275,19 @@ func (s redactedStorage) Write(ctx context.Context, r *audit.Record) error {
 		return errors.New("audit storage write failed")
 	}
 	return nil
+}
+
+// A loopback peer alone is insufficient for an unkeyed HTTP listener: reject
+// non-loopback Host values so a rebinding domain cannot read management data.
+func loopbackHost(value string) bool {
+	host := value
+	if parsed, _, err := net.SplitHostPort(value); err == nil {
+		host = parsed
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

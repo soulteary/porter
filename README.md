@@ -170,7 +170,9 @@ Nginx application route. Keep that listener private.
 - `GET /version`: version, commit, build date and runtime metadata.
 
 Without `operations.key`, the listener must bind to loopback and every request
-must come directly from a loopback peer. Forwarded IP headers are ignored.
+must come directly from a loopback peer with a loopback/localhost Host.
+Non-loopback Host values are rejected to prevent DNS rebinding. Forwarded IP
+and Host headers are ignored.
 A non-loopback listener requires a separate key of at least 32 characters:
 `Authorization: Bearer <operations.key>`. When a key is configured, it is required
 on loopback too. Query parameters and the proxy credential are not alternative

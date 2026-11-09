@@ -48,7 +48,7 @@ func configuration(t *testing.T) config.Config {
 	return c
 }
 func admin(r *Runtime, c config.Config, path, peer, key string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest("GET", "http://management.test"+path, nil)
+	req := httptest.NewRequest("GET", "http://127.0.0.1:9093"+path, nil)
 	req.RemoteAddr = peer
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
@@ -353,5 +353,22 @@ func TestMetricsDoNotUseRawRequestLabels(t *testing.T) {
 	body := admin(r, c, "/metrics", "127.0.0.1:1000", "").Body.String()
 	if strings.Contains(body, "SECRET") || !strings.Contains(body, `path="other"`) || !strings.Contains(body, `method="OTHER"`) {
 		t.Fatal("unbounded or sensitive request labels")
+	}
+}
+
+func TestUnkeyedManagementRejectsRebindingHost(t *testing.T) {
+	c := configuration(t)
+	r, e := New(c, func(context.Context) error { return nil }, version.New("dev", "test", "unknown"), &logBuffer{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer r.Close()
+	req := httptest.NewRequest("GET", "http://attacker.test/version", nil)
+	req.RemoteAddr = "127.0.0.1:1000"
+	req.Header.Set("X-Forwarded-Host", "127.0.0.1")
+	w := httptest.NewRecorder()
+	r.Handler(c, version.New("dev", "test", "unknown")).ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatal("non-loopback Host reached unkeyed management listener", w.Code)
 	}
 }
