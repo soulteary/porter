@@ -85,7 +85,7 @@ func seed() {
 		}
 	}
 	for _, pair := range [][2]string{{"P", "B"}, {"Q", "D"}} {
-		must(db.Start(strings.Repeat(pair[0], 43), strings.Repeat(pair[1], 43), "", store.Record{Expires: expires, Provider: "github", Verifier: "baseline-verifier", Nonce: "baseline-nonce"}))
+		must(db.Start(strings.Repeat(pair[0], 43), strings.Repeat(pair[1], 43), "", store.Record{Expires: expires, Provider: "github", Namespace: c.Providers["github"].ClientID, Verifier: strings.Repeat("v", 43), Nonce: "baseline-nonce"}))
 	}
 	must(db.Close())
 	must(os.Chown(c.Database, 65532, 65532))
@@ -128,7 +128,7 @@ func verify(state, browser string) {
 	}
 	tx, err := db.Consume(strings.Repeat(state, 43), strings.Repeat(browser, 43), "github")
 	must(err)
-	if !tx.Expires.Equal(expected) || tx.Verifier != "baseline-verifier" || tx.Nonce != "baseline-nonce" {
+	if !tx.Expires.Equal(expected) || tx.Provider != "github" || tx.Namespace != c.Providers["github"].ClientID || tx.Verifier != strings.Repeat("v", 43) || tx.Nonce != "baseline-nonce" {
 		panic("pending transaction changed")
 	}
 	if _, err := db.Consume(strings.Repeat(state, 43), strings.Repeat(browser, 43), "github"); !errors.Is(err, store.ErrMissing) {
