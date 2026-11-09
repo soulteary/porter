@@ -335,7 +335,7 @@ func TestMalformedProviderResponses(t *testing.T) {
 // Code exchanges must never replay, including GET-based WeChat and QQ flows.
 func TestCodeExchangeIsSingleAttempt(t *testing.T) {
 	for _, name := range []string{"github", "google", "wechat", "qq"} {
-		for _, failure := range []string{"503", "429", "disconnect", "redirect"} {
+		for _, failure := range []string{"503", "429", "401", "disconnect", "redirect"} {
 			t.Run(name+"/"+failure, func(t *testing.T) {
 				var hits, redirected atomic.Int32
 				target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected.Add(1) }))
@@ -361,6 +361,9 @@ func TestCodeExchangeIsSingleAttempt(t *testing.T) {
 						if failure == "429" {
 							status = 429
 						}
+						if failure == "401" {
+							status = 401
+						}
 						w.Header().Set("Retry-After", "0")
 						w.WriteHeader(status)
 					}
@@ -378,7 +381,7 @@ func TestCodeExchangeIsSingleAttempt(t *testing.T) {
 				}
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
-				a := &OAuth{Name: name, Client: client, ExchangeClient: exchange, Config: oauth2.Config{ClientID: "app", ClientSecret: "SECRET", Endpoint: oauth2.Endpoint{TokenURL: source.URL + "/token", AuthStyle: oauth2.AuthStyleInParams}}}
+				a := &OAuth{Name: name, Client: client, ExchangeClient: exchange, Config: oauth2.Config{ClientID: "app", ClientSecret: "SECRET", Endpoint: oauth2.Endpoint{TokenURL: source.URL + "/token", AuthStyle: oauth2.AuthStyleAutoDetect}}}
 				if _, err := a.Exchange(context.Background(), "SECRET", "verifier", "nonce"); err == nil || strings.Contains(err.Error(), "SECRET") {
 					t.Fatal("exchange accepted failure or disclosed input", err)
 				}

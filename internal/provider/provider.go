@@ -124,7 +124,11 @@ func (a *OAuth) Exchange(ctx context.Context, code, verifier, nonce string) (Ide
 	}
 	opts := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, a.exchangeClient())
-	token, e := a.Config.Exchange(ctx, code, opts...)
+	// Do not let oauth2's AuthStyleAutoDetect turn a rejected one-use code
+	// into a second token request, including for hand-constructed adapters.
+	exchangeConfig := a.Config
+	exchangeConfig.Endpoint.AuthStyle = oauth2.AuthStyleInParams
+	token, e := exchangeConfig.Exchange(ctx, code, opts...)
 	if e != nil || token == nil || token.AccessToken == "" {
 		return id, errors.New("token exchange failed")
 	}
