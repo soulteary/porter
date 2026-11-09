@@ -1,0 +1,32 @@
+name: Go
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: go mod verify
+      - run: test -z "$(gofmt -l cmd internal)"
+      - run: go vet ./...
+      - run: go test -race -coverprofile=coverage.out ./...
+      - run: go build ./cmd/porter
+      - name: Chromium login form acceptance
+        run: |
+          export PORTER_CHROME="$(command -v google-chrome)"
+          test -x "$PORTER_CHROME"
+          go test ./internal/gateway -run TestBrowserForms -count=1 -v
+      - name: Nginx trust boundary integration
+        run: |
+          docker build -f tests/nginx.Dockerfile -t porter-nginx-check .
+          docker run --rm porter-nginx-check
