@@ -166,10 +166,13 @@ def main():
         sessions(public, set())  # Restoring an old mapping must not revive revoked families.
         stop(container)
         helper("unsafe-audit")
-        failed = subprocess.run(["docker", "run", "--rm", "--network", "none", "--read-only",
+        failed_name = volume + "-unsafe"
+        active.append(failed_name)  # Also clean up a regressed, unexpectedly running service.
+        failed = subprocess.run(["docker", "run", "--rm", "--name", failed_name, "--network", "none", "--read-only",
                                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
                                  "-v", volume + ":/data", current, "serve", "-config", "/data/porter.json"],
                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+        active.remove(failed_name)
         assert failed.returncode == 1 and "audit file must be" in failed.stdout, "unsafe journal did not fail startup"
         for secret in ("FIXTURE_SECRET", "fixture@example.test", PROXY_KEY, MANAGEMENT_KEY):
             assert secret not in failed.stdout, "startup error disclosed secrets"
