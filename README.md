@@ -248,6 +248,9 @@ Logs and metrics do not contain account identifiers; the private audit journal
 can contain internal user IDs. Metric routes, methods, actions, reasons and
 providers use bounded application-owned labels, not request paths or subjects.
 
+Offline retention, ownership-preserving rotation and recovery steps are in
+[audit-retention.md](docs/audit-retention.md).
+
 ### Commands and deployment checks
 
 ```sh

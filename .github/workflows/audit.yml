@@ -1,0 +1,14 @@
+name: Audit retention
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate offline retention safety
+        run: python3 -m unittest discover -s tests/audit -v
