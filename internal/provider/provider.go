@@ -126,7 +126,12 @@ func (a *OAuth) Exchange(ctx context.Context, code, verifier, nonce string) (Ide
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, a.exchangeClient())
 	// Do not let oauth2's AuthStyleAutoDetect turn a rejected one-use code
 	// into a second token request, including for hand-constructed adapters.
-	exchangeConfig := a.Config
+	// oauth2.Config contains an atomic cache; construct a fresh value rather
+	// than copying that cache from an adapter that may already have been used.
+	exchangeConfig := oauth2.Config{
+		ClientID: a.Config.ClientID, ClientSecret: a.Config.ClientSecret,
+		RedirectURL: a.Config.RedirectURL, Scopes: a.Config.Scopes, Endpoint: a.Config.Endpoint,
+	}
 	exchangeConfig.Endpoint.AuthStyle = oauth2.AuthStyleInParams
 	token, e := exchangeConfig.Exchange(ctx, code, opts...)
 	if e != nil || token == nil || token.AccessToken == "" {
