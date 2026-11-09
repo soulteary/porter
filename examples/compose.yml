@@ -1,0 +1,19 @@
+services:
+  porter:
+    image: ${PORTER_IMAGE:?set PORTER_IMAGE to an immutable image digest}
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 20s
+    ports:
+      - "127.0.0.1:8083:8083"
+    volumes:
+      - type: bind
+        source: ${PORTER_CONFIG_FILE:?set PORTER_CONFIG_FILE}
+        target: /etc/porter/porter.json
+        read_only: true
+      - type: bind
+        source: ${PORTER_DATA_DIR:?set PORTER_DATA_DIR}
+        target: /data
