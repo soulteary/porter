@@ -14,6 +14,7 @@ its UID/GID. Keep the default 30-day policy only if it matches the deployment's
 retention requirements; set `--keep-days` explicitly for the chosen policy.
 
 ```sh
+set -e
 python3 tools/audit-retention.py --directory /var/lib/porter --rotate --keep-days 30
 docker compose -f examples/compose.yml stop porter
 python3 tools/audit-retention.py --directory /var/lib/porter --rotate --keep-days 30 --apply --stopped
