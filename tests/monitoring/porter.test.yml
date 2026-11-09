@@ -1,0 +1,109 @@
+rule_files:
+  - ../../examples/monitoring/porter.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: outages and audit loss
+    interval: 1m
+    input_series:
+      - series: 'up{job="porter",instance="porter:9093"}'
+        values: '0+0x10'
+      - series: 'probe_success{job="porter-readiness",instance="http://porter:9093/readyz"}'
+        values: '0+0x10'
+      - series: 'up{job="porter-readiness",instance="http://porter:9093/readyz"}'
+        values: '0+0x10'
+      - series: 'porter_audit_dropped_total{job="porter",instance="porter:9093"}'
+        values: '0+1x10'
+      - series: 'porter_audit_write_failures_total{job="porter",instance="porter:9093"}'
+        values: '0+1x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PorterScrapeUnavailable
+        exp_alerts:
+          - exp_labels: {job: porter, instance: 'porter:9093', severity: critical}
+            exp_annotations:
+              summary: Porter management scrape is unavailable
+              description: Check process state, private monitoring connectivity and the management credential.
+      - eval_time: 3m
+        alertname: PorterReadinessFailed
+        exp_alerts:
+          - exp_labels: {job: porter-readiness, instance: 'http://porter:9093/readyz', severity: critical}
+            exp_annotations:
+              summary: Porter readiness probe is failing
+              description: Check storage, maintenance, draining state and configured Stargate readiness. A ready identity-only service does not prove /auth is configured.
+      - eval_time: 3m
+        alertname: PorterReadinessProbeUnavailable
+        exp_alerts:
+          - exp_labels: {job: porter-readiness, instance: 'http://porter:9093/readyz', severity: warning}
+            exp_annotations:
+              summary: Porter readiness exporter is unavailable
+              description: Check the private blackbox exporter and probe configuration before attributing the failure to Porter.
+      - eval_time: 3m
+        alertname: PorterAuditDropped
+        exp_alerts:
+          - exp_labels: {job: porter, instance: 'porter:9093', severity: critical}
+            exp_annotations:
+              summary: Porter audit records were dropped
+              description: Inspect queue pressure and storage performance. Authentication continues; missing audit records cannot be reconstructed from this counter.
+      - eval_time: 3m
+        alertname: PorterAuditWriteFailed
+        exp_alerts:
+          - exp_labels: {job: porter, instance: 'porter:9093', severity: critical}
+            exp_annotations:
+              summary: Porter audit persistence failed
+              description: Check journal permissions, mount access, free space and storage health. Preserve the session database while repairing the audit destination.
+  - name: callback volume gate and access denials
+    interval: 1m
+    input_series:
+      - series: 'porter_auth_events_total{job="porter",instance="high",provider="github",action="login_callback",result="failure",reason="provider_authentication_failed"}'
+        values: '0+10x15'
+      - series: 'porter_auth_events_total{job="porter",instance="low",provider="github",action="login_callback",result="failure",reason="provider_authentication_failed"}'
+        values: '0+1x15'
+      - series: 'porter_auth_events_total{job="porter",instance="normal",provider="none",action="access_check",result="failure",reason="unauthorized"}'
+        values: '0+100x15'
+      - series: 'porter_auth_events_total{job="porter",instance="limited",provider="github",action="login_callback",result="failure",reason="rate_limited"}'
+        values: '0+100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PorterLoginCallbackFailureRate
+        exp_alerts:
+          - exp_labels: {job: porter, instance: high, provider: github, severity: warning}
+            exp_annotations:
+              summary: Porter login callback failure rate is elevated
+              description: Check bounded failure reasons and provider availability. This rule excludes ordinary unauthenticated access checks and requires at least 20 callbacks per five minutes.
+  - name: healthy counters, resets and sparse observations
+    interval: 1m
+    input_series:
+      - series: 'up{job="porter",instance="healthy"}'
+        values: '1+0x15'
+      - series: 'porter_audit_dropped_total{job="porter",instance="healthy"}'
+        values: '9 9 9 0 0 0 0 0 0 0 0'
+      - series: 'porter_audit_write_failures_total{job="porter",instance="healthy"}'
+        values: '0+0x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="sparse",path="/auth",le="+Inf"}'
+        values: '0+1x15'
+      - series: 'porter_request_duration_seconds_count{job="porter",instance="sparse",path="/auth"}'
+        values: '0+1x15'
+    alert_rule_test:
+      - {eval_time: 5m, alertname: PorterAuditDropped, exp_alerts: []}
+      - {eval_time: 5m, alertname: PorterAuditWriteFailed, exp_alerts: []}
+      - {eval_time: 5m, alertname: PorterScrapeUnavailable, exp_alerts: []}
+      - {eval_time: 10m, alertname: PorterAuthenticationLatency, exp_alerts: []}
+  - name: sustained latency with sufficient requests
+    interval: 1m
+    input_series:
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="slow",path="/auth",le="1"}'
+        values: '0+0x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="slow",path="/auth",le="5"}'
+        values: '0+10x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="slow",path="/auth",le="+Inf"}'
+        values: '0+10x15'
+      - series: 'porter_request_duration_seconds_count{job="porter",instance="slow",path="/auth"}'
+        values: '0+10x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PorterAuthenticationLatency
+        exp_alerts:
+          - exp_labels: {job: porter, instance: slow, path: /auth, severity: warning}
+            exp_annotations:
+              summary: Porter authentication latency is elevated
+              description: Check upstream latency and storage contention. The threshold is an initial operating value, not a service-level guarantee.

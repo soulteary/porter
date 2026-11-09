@@ -7,3 +7,8 @@
 !internal/**
 !examples/
 !examples/nginx.conf
+!examples/monitoring/
+!examples/monitoring/**
+!tests/
+!tests/monitoring/
+!tests/monitoring/**

@@ -217,6 +217,9 @@ new login transaction. Other calls have no application-level retries; ordinary
 read-only requests may retain standard-library transport recovery. Idle pools
 are closed on service shutdown. No session or database format changes are made.
 
+Monitoring configuration, alert thresholds and response steps are documented in
+[monitoring.md](docs/monitoring.md).
+
 ### Logging and audit
 
 Structured JSON logs use fixed route/action/result/reason fields and a generated
