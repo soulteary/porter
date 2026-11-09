@@ -372,3 +372,98 @@ func TestUnkeyedManagementRejectsRebindingHost(t *testing.T) {
 		t.Fatal("non-loopback Host reached unkeyed management listener", w.Code)
 	}
 }
+
+// Replacing the configured path after initialization must not redirect writes
+// into a public file or the session database.
+func TestAuditRetainsValidatedDescriptor(t *testing.T) {
+	c := configuration(t)
+	original := []byte("session database")
+	if err := os.WriteFile(c.Database, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	storage, err := openAudit(c.Operations.AuditFile, c.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	retained := c.Operations.AuditFile + ".retained"
+	if err := os.Rename(c.Operations.AuditFile, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(c.Database, c.Operations.AuditFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Write(context.Background(), audit.NewRecord(audit.EventLogout, audit.ResultSuccess)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(c.Database)
+	if err != nil || !bytes.Equal(data, original) {
+		t.Fatal("audit changed session database", err)
+	}
+	data, err = os.ReadFile(retained)
+	if err != nil || !bytes.Contains(data, []byte(`"event_type":"logout"`)) {
+		t.Fatal("audit lost validated destination", err, string(data))
+	}
+	if _, err := openAudit(c.Operations.AuditFile, c.Database); err == nil {
+		t.Fatal("audit accepted symbolic link")
+	}
+}
+
+func TestStargateProbeRejectsURLCredentials(t *testing.T) {
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer upstream.Close()
+	endpoint := strings.Replace(upstream.URL, "://", "://user:SECRET@", 1)
+	if err := CheckStargate(context.Background(), endpoint, time.Second); err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Fatal("credential URL accepted or disclosed", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("probe sent URL credentials")
+	}
+}
+
+func TestAuditValidatesOpenedFileAfterPathReplacement(t *testing.T) {
+	for _, destination := range []string{"public file", "database alias", "symlink"} {
+		t.Run(destination, func(t *testing.T) {
+			c := configuration(t)
+			original := []byte("session database")
+			if err := os.WriteFile(c.Database, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(c.Operations.AuditFile, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			storage, err := openAuditWith(c.Operations.AuditFile, c.Database, func(path string, flags int, mode os.FileMode) (*os.File, error) {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				switch destination {
+				case "public file":
+					if err := os.WriteFile(path, nil, 0644); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Chmod(path, 0644); err != nil {
+						t.Fatal(err)
+					}
+				case "database alias":
+					if err := os.Link(c.Database, path); err != nil {
+						t.Fatal(err)
+					}
+				case "symlink":
+					if err := os.Symlink(c.Database, path); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return os.OpenFile(path, flags, mode)
+			})
+			if err == nil {
+				storage.Close()
+				t.Fatal("path replacement bypassed audit validation")
+			}
+			data, err := os.ReadFile(c.Database)
+			if err != nil || !bytes.Equal(data, original) {
+				t.Fatal("initialization modified database", err)
+			}
+		})
+	}
+}

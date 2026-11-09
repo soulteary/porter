@@ -4,6 +4,7 @@ package operations
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -216,7 +218,7 @@ func (r *Runtime) Handler(c config.Config, info *version.Info) http.Handler {
 // cookie, identity or forwarded request context and never follows redirects.
 func CheckStargate(ctx context.Context, endpoint string, timeout time.Duration) error {
 	u, e := url.Parse(endpoint)
-	if e != nil {
+	if e != nil || u.User != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return errors.New("invalid dependency endpoint")
 	}
 	u.Path = "/readyz"
@@ -240,6 +242,10 @@ func CheckStargate(ctx context.Context, endpoint string, timeout time.Duration) 
 }
 
 func openAudit(path, database string) (audit.Storage, error) {
+	return openAuditWith(path, database, os.OpenFile)
+}
+
+func openAuditWith(path, database string, open func(string, int, os.FileMode) (*os.File, error)) (audit.Storage, error) {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return nil, errors.New("audit directory unavailable")
 	}
@@ -253,18 +259,55 @@ func openAudit(path, database string) (audit.Storage, error) {
 	} else if !os.IsNotExist(e) {
 		return nil, errors.New("audit file unavailable")
 	}
-	f, e := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	// Open once and validate the descriptor used for every write. A path check
+	// followed by audit.NewFileStorage would reopen a potentially replaced path.
+	f, e := open(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
 	if e != nil {
 		return nil, errors.New("audit file unavailable")
 	}
-	if e = f.Close(); e != nil {
-		return nil, errors.New("audit file unavailable")
+	st, e := f.Stat()
+	if e != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0077 != 0 {
+		f.Close()
+		return nil, errors.New("audit file must be a regular owner-only file")
 	}
-	storage, e := audit.NewFileStorage(path)
-	if e != nil {
-		return nil, errors.New("audit storage unavailable")
+	if db, e := os.Stat(database); e == nil && os.SameFile(st, db) {
+		f.Close()
+		return nil, errors.New("audit file aliases the session database")
 	}
-	return storage, nil
+	return &privateAuditStorage{file: f}, nil
+}
+
+// The kit owns records, masking, queueing and worker lifecycle. This write-only
+// adapter retains the validated descriptor; Porter exposes no audit query API.
+type privateAuditStorage struct {
+	mu   sync.Mutex
+	file *os.File
+}
+
+func (s *privateAuditStorage) Write(ctx context.Context, record *audit.Record) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	n, err := s.file.Write(data)
+	if err == nil && n != len(data) {
+		return io.ErrShortWrite
+	}
+	return err
+}
+func (*privateAuditStorage) Query(context.Context, *audit.QueryFilter) ([]*audit.Record, error) {
+	return nil, errors.New("audit queries are not supported")
+}
+func (s *privateAuditStorage) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.file.Close()
 }
 
 // Keep raw OS/storage errors out of the kit's own worker error log too.

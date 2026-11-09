@@ -251,6 +251,9 @@ func (c *Config) validateOperations() error {
 	if o.Key != "" && (len(o.Key) < 32 || !clean(o.Key)) {
 		return errors.New("operations.key requires at least 32 characters")
 	}
+	if o.Key != "" && (o.Key == c.ProxyKey || o.Key == c.StargateSecret) {
+		return errors.New("operations.key must differ from proxy_key and stargate_secret")
+	}
 	if _, e = logger.ParseLevel(o.LogLevel); e != nil {
 		return errors.New("invalid operations.log_level")
 	}

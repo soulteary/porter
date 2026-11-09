@@ -176,7 +176,8 @@ and Host headers are ignored.
 A non-loopback listener requires a separate key of at least 32 characters:
 `Authorization: Bearer <operations.key>`. When a key is configured, it is required
 on loopback too. Query parameters and the proxy credential are not alternative
-management authentication methods.
+management authentication methods. Configuration rejects a management key equal
+to `proxy_key` or `stargate_secret`.
 
 `operations.listen`, `operations.key`, `operations.audit_file`,
 `operations.log_level`, `operations.audit_queue_size` and
@@ -218,7 +219,8 @@ guarantee. Runtime audit failure does not fail readiness; monitor the loss count
 
 Provision an owner-writable audit directory. Existing audit files must be regular
 files with no group/other permissions, and must not alias the session database.
-The service does not silently chmod existing files. Arrange log retention and
+The writer retains the verified file descriptor and rejects a symbolic-link
+destination. The service does not silently chmod existing files. Arrange log retention and
 rotation externally; restart after rotating the journal so the new file is opened.
 Logs and metrics do not contain account identifiers; the private audit journal
 can contain internal user IDs. Metric routes, methods, actions, reasons and

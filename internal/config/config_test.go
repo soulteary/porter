@@ -103,3 +103,12 @@ func TestOperationsConfiguration(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestManagementKeyCannotReuseAuthenticationCredentials(t *testing.T) {
+	for _, key := range []string{strings.Repeat("p", 32), strings.Repeat("s", 32)} {
+		c := Config{PublicURL: "https://porter.test", LandingURL: "https://porter.test/app", ProxyKey: strings.Repeat("p", 32), StargateURL: "https://stargate.test/_auth", StargateSecret: strings.Repeat("s", 32), Providers: map[string]Provider{"github": {ClientID: "app", ClientSecret: "secret"}}, Operations: Operations{Key: key}}
+		if err := c.Validate(); err == nil || strings.Contains(err.Error(), key) {
+			t.Fatal("reused management credential accepted or disclosed", err)
+		}
+	}
+}
