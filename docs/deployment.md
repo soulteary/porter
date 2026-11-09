@@ -71,22 +71,25 @@ python3 tests/production.py
 ```
 
 The test pins the baseline to merged PR #2 (`bdf69d4600cba5cf55b8df65247e7f4ea1f5899d`).
-It builds the real baseline production image and compiles a test-only fixture
-against that baseline's store/config packages. The fixture writes synthetic
-sessions, revoked and expired records, and a pending one-use login transaction.
-It is never copied into the production image. The candidate is built from the
+It builds the real baseline production image and compiles test-only fixtures
+against both the baseline and candidate store/config packages. The baseline
+fixture writes synthetic sessions, revoked and expired records, and pending
+one-use login transactions. Neither helper is copied into the production image. The candidate is built from the
 current source tree with version, commit, and build date metadata.
 
 The suite starts the baseline, upgrades to the candidate, restarts it, and rolls
 back to the baseline against the same isolated volume. It checks existing-session
 identity, logout persistence, expired/revoked rejection, unchanged absolute expiry,
-pending transaction contents and one-use consumption, binding reconciliation,
-private audit permissions and flush, rejection of unsafe audit files at startup,
-log/audit redaction, management key isolation,
+pending transaction contents and one-use consumption by both implementations,
+live session expiry without a restart, binding reconciliation, private audit
+permissions and flush, startup rejection of read-only data volumes and unsafe
+audit files, log/audit redaction, management key isolation,
 public management-route rejection, and fail-closed `/auth` in identity-only mode.
 It uses a read-only root filesystem, no capabilities, no-new-privileges, the
 production image's default non-root user, and loopback-only published test ports.
-Temporary containers, volumes, and image tags are removed after the run.
+Configuration uses a separate read-only volume with no writable alias in the
+service container. Temporary containers, volumes, and image tags are removed
+after the run.
 
 To validate another candidate checkout without changing the baseline:
 

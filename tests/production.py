@@ -67,20 +67,21 @@ def main():
     candidate_context = args.candidate_context.resolve()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate_context, text=True).strip()
     suffix = uuid.uuid4().hex[:12]
-    current, previous, fixture = ["porter-acceptance-" + name + ":" + suffix
-                                  for name in ("candidate", "baseline", "fixture")]
+    current, previous, fixture, candidate_fixture = ["porter-acceptance-" + name + ":" + suffix
+                                  for name in ("candidate", "baseline", "fixture", "candidate-fixture")]
     volume, active = "porter-acceptance-" + suffix, []
+    config_volume = volume + "-config"
     built = []
 
-    def helper(command):
-        docker("run", "--rm", "--user", "0:0", "--network", "none", "-v", volume + ":/data", fixture, command)
+    def helper(command, image=fixture, capture=False):
+        return docker("run", "--rm", "--user", "0:0", "--network", "none", "-v", volume + ":/data", "-v", config_volume + ":/configuration", image, command, capture=capture)
 
     def start(image):
         container = docker("run", "-d", "--read-only", "--cap-drop", "ALL",
                            "--security-opt", "no-new-privileges:true",
-                           "-v", volume + ":/data", "-p", "127.0.0.1::8083",
+                           "-v", volume + ":/data", "-v", config_volume + ":/config:ro", "-p", "127.0.0.1::8083",
                            "-p", "127.0.0.1::9093", image,
-                           "serve", "-config", "/data/porter.json", capture=True)
+                           "serve", "-config", "/config/porter.json", capture=True)
         active.append(container)
         ports = json.loads(docker("inspect", "--format", "{{json .NetworkSettings.Ports}}", container, capture=True))
         public = ports["8083/tcp"][0]["HostPort"]
@@ -101,7 +102,7 @@ def main():
         code = docker("inspect", "--format", "{{.State.ExitCode}}", container, capture=True)
         assert code == "0", "unclean shutdown: " + code
         logs = docker("logs", container, capture=True)
-        for secret in ("FIXTURE_SECRET", "fixture@example.test", PROXY_KEY, MANAGEMENT_KEY, "L" * 43):
+        for secret in ("FIXTURE_SECRET", "fixture@example.test", PROXY_KEY, MANAGEMENT_KEY, *(letter * 43 for letter in "LCREF")):
             assert secret not in logs, "secret in production logs"
         docker("rm", container)
         active.remove(container)
@@ -126,6 +127,16 @@ def main():
                 ignore.write("\n!tests/\n!tests/fixture.Dockerfile\n!tests/fixture/\n!tests/fixture/**\n")
             docker("build", "-f", str(pathlib.Path(directory) / "tests" / "fixture.Dockerfile"), "-t", fixture, directory)
             built.append(fixture)
+        # Compile a second helper against the candidate's own packages. The
+        # old helper alone cannot prove the new implementation consumes old data.
+        with tempfile.TemporaryDirectory(prefix="porter-candidate-fixture-") as directory:
+            context = pathlib.Path(directory)
+            for name in ("go.mod", "go.sum"):
+                shutil.copyfile(candidate_context / name, context / name)
+            shutil.copytree(candidate_context / "internal", context / "internal")
+            shutil.copytree(ROOT / "tests" / "fixture", context / "tests" / "fixture")
+            docker("build", "-f", str(ROOT / "tests" / "fixture.Dockerfile"), "-t", candidate_fixture, directory)
+            built.append(candidate_fixture)
         built_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         docker("build", "-t", current, "--build-arg", "VERSION=acceptance",
                "--build-arg", "COMMIT=" + commit, "--build-arg", "BUILD_DATE=" + built_date, str(candidate_context))
@@ -135,12 +146,17 @@ def main():
         version = json.loads(docker("run", "--rm", "--network", "none", "--read-only", current, "version", "--json", capture=True))
         assert (version["version"], version["commit"], version["build_date"]) == ("acceptance", commit, built_date)
         docker("volume", "create", volume)
+        docker("volume", "create", config_volume)
         helper("seed")
         container, public, management = start(previous)
         sessions(public, {"L", "C"})
         stop(container)
+        expiry_ms = int(helper("arm-expiry", capture=True))
         container, public, management = start(current)
         sessions(public, {"L", "C"})
+        require_status(200, public, "/identity", token="F")
+        time.sleep(max(0, expiry_ms / 1000 - time.time()) + 0.1)
+        require_status(401, public, "/identity", token="F")  # No restart or prune tick.
         for path in ("/metrics", "/readyz", "/version"):
             require_status(404, public, path)
             require_status(401, management, path, management=True, key=PROXY_KEY)
@@ -156,7 +172,8 @@ def main():
         container, public, management = start(previous)
         sessions(public, {"C"})
         stop(container)
-        helper("verify")  # Old implementation reads records and enforces one-use transactions.
+        helper("verify-candidate", image=candidate_fixture)
+        helper("verify")  # Both old and new implementations consume baseline transactions.
         helper("change-binding")
         container, public, management = start(current)
         sessions(public, set())
@@ -165,22 +182,27 @@ def main():
         container, public, management = start(previous)
         sessions(public, set())  # Restoring an old mapping must not revive revoked families.
         stop(container)
-        helper("unsafe-audit")
-        failed_name = volume + "-unsafe"
-        active.append(failed_name)  # Also clean up a regressed, unexpectedly running service.
-        failed = subprocess.run(["docker", "run", "--rm", "--name", failed_name, "--network", "none", "--read-only",
-                                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-                                 "-v", volume + ":/data", current, "serve", "-config", "/data/porter.json"],
-                                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
-        active.remove(failed_name)
-        assert failed.returncode == 1 and "audit file must be" in failed.stdout, "unsafe journal did not fail startup"
-        for secret in ("FIXTURE_SECRET", "fixture@example.test", PROXY_KEY, MANAGEMENT_KEY):
-            assert secret not in failed.stdout, "startup error disclosed secrets"
+        for scenario, readonly, expected in (("readonly-data", True, "session storage initialization failed"),
+                                              ("unsafe-audit", False, "audit file must be")):
+            if scenario == "unsafe-audit":
+                helper("unsafe-audit")
+            failed_name = volume + "-" + scenario
+            active.append(failed_name)
+            failed = subprocess.run(["docker", "run", "--rm", "--name", failed_name, "--network", "none", "--read-only",
+                                     "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+                                     "-v", volume + (":/data:ro" if readonly else ":/data"),
+                                     "-v", config_volume + ":/config:ro", current,
+                                     "serve", "-config", "/config/porter.json"],
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+            active.remove(failed_name)
+            assert failed.returncode == 1 and expected in failed.stdout, "unsafe deployment did not fail startup"
+            for secret in ("FIXTURE_SECRET", "fixture@example.test", PROXY_KEY, MANAGEMENT_KEY):
+                assert secret not in failed.stdout, "startup error disclosed secrets"
         print("PASS: production image, upgrade, restart, rollback, expiry, revocation, binding reconciliation and pending transactions")
     finally:
         for container in active:
             subprocess.run(["docker", "rm", "-f", container], check=False)
-        subprocess.run(["docker", "volume", "rm", volume], check=False)
+        subprocess.run(["docker", "volume", "rm", volume, config_volume], check=False)
         for image in built:
             subprocess.run(["docker", "image", "rm", image], check=False)
 
