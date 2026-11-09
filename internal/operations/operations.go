@@ -26,6 +26,7 @@ import (
 	metrics "github.com/soulteary/metrics-kit/v3"
 	"github.com/soulteary/porter/internal/config"
 	"github.com/soulteary/porter/internal/observe"
+	"github.com/soulteary/porter/internal/outbound"
 	version "github.com/soulteary/version-kit/v4"
 	versionhttp "github.com/soulteary/version-kit/v4/httpadapter"
 )
@@ -41,6 +42,7 @@ type Runtime struct {
 	auditDropped, auditFailed   prometheus.Counter
 	audit                       *audit.Logger
 	readiness                   *health.Aggregator
+	probe                       *http.Client
 	draining, maintenanceFailed atomic.Bool
 }
 
@@ -74,6 +76,7 @@ func newRuntime(c config.Config, check func(context.Context) error, info *versio
 		return float64(stats.QueueLength)
 	}))
 	timeout := time.Duration(c.Operations.ProbeTimeoutSeconds) * time.Second
+	r.probe = outbound.New(timeout)
 	hc := health.DefaultConfig().WithServiceName("porter").WithTimeout(timeout)
 	hc.CriticalChecks = []string{"lifecycle", "storage", "stargate"}
 	r.readiness = health.NewAggregator(hc)
@@ -102,7 +105,7 @@ func newRuntime(c config.Config, check func(context.Context) error, info *versio
 		return nil
 	}).WithTimeout(timeout))
 	if c.StargateURL != "" {
-		r.readiness.AddChecker(health.NewCustomChecker("stargate", func(ctx context.Context) error { return CheckStargate(ctx, c.StargateURL, timeout) }).WithTimeout(timeout))
+		r.readiness.AddChecker(health.NewCustomChecker("stargate", func(ctx context.Context) error { return checkStargate(ctx, c.StargateURL, r.probe) }).WithTimeout(timeout))
 	} else {
 		r.readiness.AddChecker(health.NewDisabledChecker("stargate").WithMessage("identity-only mode"))
 	}
@@ -182,6 +185,7 @@ func (r *Runtime) Close() error {
 		return r.closeErr
 	}
 	r.closed = true
+	r.probe.CloseIdleConnections()
 	r.closeErr = r.audit.Stop()
 	return r.closeErr
 }
@@ -217,6 +221,11 @@ func (r *Runtime) Handler(c config.Config, info *version.Info) http.Handler {
 // CheckStargate probes readiness, not /_auth. It sends no application credential,
 // cookie, identity or forwarded request context and never follows redirects.
 func CheckStargate(ctx context.Context, endpoint string, timeout time.Duration) error {
+	client := outbound.New(timeout)
+	defer client.CloseIdleConnections()
+	return checkStargate(ctx, endpoint, client)
+}
+func checkStargate(ctx context.Context, endpoint string, client *http.Client) error {
 	u, e := url.Parse(endpoint)
 	if e != nil || u.User != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return errors.New("invalid dependency endpoint")
@@ -229,7 +238,6 @@ func CheckStargate(ctx context.Context, endpoint string, timeout time.Duration) 
 	if e != nil {
 		return errors.New("invalid dependency request")
 	}
-	client := &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, e := client.Do(req)
 	if e != nil {
 		return errors.New("dependency unavailable")
