@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -69,5 +70,50 @@ func TestRedirectCancellationTimeoutAndTLS(t *testing.T) {
 	if resp, err = client.Get(tlsServer.URL); err == nil {
 		resp.Body.Close()
 		t.Fatal("accepted untrusted TLS")
+	}
+}
+
+func TestExchangeDoesNotNegotiateHTTP2OrReuseConnections(t *testing.T) {
+	var mu sync.Mutex
+	peers := map[string]bool{}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/exchange" {
+			mu.Lock()
+			if peers[r.RemoteAddr] {
+				t.Error("exchange reused a connection")
+			}
+			peers[r.RemoteAddr] = true
+			mu.Unlock()
+			if r.ProtoMajor != 1 {
+				t.Error("exchange negotiated HTTP/2")
+			}
+		}
+		io.WriteString(w, r.Proto)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	pooled := server.Client()
+	pooled.Timeout = time.Second
+	defer pooled.CloseIdleConnections()
+	resp, err := pooled.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proto := resp.ProtoMajor
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if proto != 2 {
+		t.Fatal("fixture did not negotiate HTTP/2")
+	}
+	exchange := Exchange(pooled)
+	defer exchange.CloseIdleConnections()
+	for range 2 {
+		resp, err = exchange.Get(server.URL + "/exchange")
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
 	}
 }
