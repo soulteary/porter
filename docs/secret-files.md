@@ -55,6 +55,10 @@ cli-kit resolves the JSON path in this order:
 2. Non-empty `PORTER_CONFIG_FILE`.
 3. `porter.json`.
 
+The container default command already includes `-config /etc/porter/porter.json`.
+To select the file through `PORTER_CONFIG_FILE`, override that command with
+`serve` so an explicit image flag does not take precedence.
+
 No other environment variables override JSON fields or secret contents. The
 existing `porter -config ...` invocation still works. `version` and `--version`
 ignore configuration and secret sources entirely. `check-config` reads files and
