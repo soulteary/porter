@@ -25,8 +25,9 @@ type ValidationError struct{ message string }
 func (e *ValidationError) Error() string { return e.message }
 
 type Provider struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
+	ClientID         string `json:"client_id"`
+	ClientSecret     string `json:"client_secret,omitempty"`
+	ClientSecretFile string `json:"client_secret_file,omitempty"`
 }
 type Binding struct {
 	Provider  string `json:"provider"`
@@ -39,6 +40,7 @@ type Binding struct {
 type Operations struct {
 	Listen              string `json:"listen,omitempty"`
 	Key                 string `json:"key,omitempty"`
+	KeyFile             string `json:"key_file,omitempty"`
 	AuditFile           string `json:"audit_file,omitempty"`
 	LogLevel            string `json:"log_level,omitempty"`
 	AuditQueueSize      int    `json:"audit_queue_size,omitempty"`
@@ -49,11 +51,13 @@ type Config struct {
 	AllowInsecureStargate bool                `json:"allow_insecure_stargate,omitempty"`
 	StargateURL           string              `json:"stargate_url,omitempty"`
 	StargateSecret        string              `json:"stargate_secret,omitempty"`
+	StargateSecretFile    string              `json:"stargate_secret_file,omitempty"`
 	Listen                string              `json:"listen"`
 	PublicURL             string              `json:"public_url"`
 	LandingURL            string              `json:"landing_url"`
 	Database              string              `json:"database"`
-	ProxyKey              string              `json:"proxy_key"`
+	ProxyKey              string              `json:"proxy_key,omitempty"`
+	ProxyKeyFile          string              `json:"proxy_key_file,omitempty"`
 	Development           bool                `json:"development"`
 	SessionSeconds        int                 `json:"session_seconds"`
 	Providers             map[string]Provider `json:"providers"`
@@ -75,6 +79,9 @@ func Load(path string) (Config, error) {
 	var extra any
 	if e = d.Decode(&extra); e != io.EOF {
 		return c, errors.New("configuration must contain one JSON object")
+	}
+	if e = c.resolveSecrets(filepath.Dir(path)); e != nil {
+		return c, &ValidationError{message: e.Error()}
 	}
 	if e = c.Validate(); e != nil {
 		return c, &ValidationError{message: e.Error()}

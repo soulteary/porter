@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/soulteary/cli-kit/configutil"
 	logger "github.com/soulteary/logger-kit/v3"
 	"github.com/soulteary/porter/internal/config"
 	"github.com/soulteary/porter/internal/diagnostic"
@@ -53,7 +54,7 @@ func run(ctx context.Context, args []string, out, logs io.Writer) error {
 	}
 	flags := flag.NewFlagSet("porter "+command, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	path := flags.String("config", "porter.json", "private configuration path")
+	flags.String("config", "porter.json", "private configuration path")
 	asJSON := flags.Bool("json", false, "print machine-readable command output")
 	var network bool
 	if command == "doctor" {
@@ -79,7 +80,8 @@ func run(ctx context.Context, args []string, out, logs io.Writer) error {
 		_, e := fmt.Fprintln(out, info.Full())
 		return e
 	}
-	c, e := config.Load(*path)
+	path := configutil.ResolveString(flags, "config", "PORTER_CONFIG_FILE", "porter.json", false)
+	c, e := config.Load(path)
 	if e != nil {
 		if command != "serve" {
 			report := diagnostic.Report{OK: false, Checks: []diagnostic.Check{{Name: "configuration", Level: "error", Message: diagnostic.ConfigurationProblem(e), Hint: "check JSON syntax, required fields and file access"}}}
