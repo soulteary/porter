@@ -343,3 +343,23 @@ live provider authorization or a deployment against a real Warden directory.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+### Outbound HTTP ownership
+
+Porter uses `http-kit/v2` to construct its HTTP clients. Provider metadata and
+identity reads, Stargate authorization, and readiness use separate owned pools
+with at most 32 connections per destination, eight idle connections per host,
+and bounded dialing, TLS handshakes and response headers. Authentication calls
+retain their ten-second total timeout; readiness retains its configured timeout.
+TLS certificate verification and a TLS 1.2 minimum are enforced. Standard proxy
+environment variables remain supported. No request logging or trace propagation
+is enabled, and redirects are rejected on all paths.
+
+Authorization-code exchanges use a separate HTTP/1.1 transport with connection
+reuse disabled. Porter does not invoke kit retries or OAuth authentication-style
+auto-detection. This also prevents standard-library replay on reused connections
+or HTTP/2 streams: WeChat and QQ exchange one-use codes using GET, which must
+not be treated as a replayable identity read. An ambiguous failure requires a
+new login transaction. Other calls have no application-level retries; ordinary
+read-only requests may retain standard-library transport recovery. Idle pools
+are closed on service shutdown. No session or database format changes are made.

@@ -44,6 +44,8 @@ github.com/soulteary/audit-kit/v2 v2.1.4 h1:owJT3uvzvOzwsEn61GLQa9OSq+ZwDUYQ318R
 github.com/soulteary/audit-kit/v2 v2.1.4/go.mod h1:q6CWZarncznHvlaR3nCANyLiZQvOC1pnPA/0EUIRR84=
 github.com/soulteary/health-kit/v4 v4.0.5 h1:7rjlst/T8p3Qz5O5mZiDmUwvhZNOLF/H1ihkanmSCEo=
 github.com/soulteary/health-kit/v4 v4.0.5/go.mod h1:5NvaIZIFFeheVRvWGfZKeZUWyOGsVexxJ4kyhiSgt1M=
+github.com/soulteary/http-kit/v2 v2.1.0 h1:BmHQ1ZnPPINkloYiug8YmmbVBL3aeEBY3Y4I095sQjk=
+github.com/soulteary/http-kit/v2 v2.1.0/go.mod h1:bRSSQY7HnhohsmMGHtTKO8ZgW2STgogp1X/D0LVYmWs=
 github.com/soulteary/logger-kit/v3 v3.0.4 h1:agdskl+YQjWVfBdVUd7EAbm14+FP9QegaD4xIQRwbJo=
 github.com/soulteary/logger-kit/v3 v3.0.4/go.mod h1:4Irzc/ps7qmB4pXolVbDgF1cVyOFjcHGqIAJDDOUUk0=
 github.com/soulteary/metrics-kit/v3 v3.0.4 h1:1OfCwe35MLfaMCEoJnpK+e2+IuarMIBXFTfoCNn854M=

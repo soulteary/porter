@@ -7,16 +7,19 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/soulteary/porter/internal/config"
+	"github.com/soulteary/porter/internal/outbound"
 	"golang.org/x/oauth2"
 )
 
@@ -323,6 +326,64 @@ func TestMalformedProviderResponses(t *testing.T) {
 				a.identityURL = upstream.URL
 				if _, e = a.Exchange(context.Background(), "code", "verifier", "nonce"); e == nil {
 					t.Fatal("accepted malformed provider response")
+				}
+			})
+		}
+	}
+}
+
+// Code exchanges must never replay, including GET-based WeChat and QQ flows.
+func TestCodeExchangeIsSingleAttempt(t *testing.T) {
+	for _, name := range []string{"github", "google", "wechat", "qq"} {
+		for _, failure := range []string{"503", "429", "disconnect", "redirect"} {
+			t.Run(name+"/"+failure, func(t *testing.T) {
+				var hits, redirected atomic.Int32
+				target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected.Add(1) }))
+				defer target.Close()
+				source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/warm" {
+						io.WriteString(w, "ok")
+						return
+					}
+					hits.Add(1)
+					switch failure {
+					case "disconnect":
+						conn, _, err := w.(http.Hijacker).Hijack()
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						conn.Close()
+					case "redirect":
+						http.Redirect(w, r, target.URL, 307)
+					default:
+						status := 503
+						if failure == "429" {
+							status = 429
+						}
+						w.Header().Set("Retry-After", "0")
+						w.WriteHeader(status)
+					}
+				}))
+				defer source.Close()
+				client := outbound.New(time.Second)
+				defer client.CloseIdleConnections()
+				exchange := outbound.Exchange(client)
+				defer exchange.CloseIdleConnections()
+				// Prime the exchange transport before a disconnect. It must not retain an
+				// idle connection that net/http could reuse and then replay a code on.
+				resp, err := exchange.Get(source.URL + "/warm")
+				if err != nil {
+					t.Fatal(err)
+				}
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				a := &OAuth{Name: name, Client: client, ExchangeClient: exchange, Config: oauth2.Config{ClientID: "app", ClientSecret: "SECRET", Endpoint: oauth2.Endpoint{TokenURL: source.URL + "/token", AuthStyle: oauth2.AuthStyleInParams}}}
+				if _, err := a.Exchange(context.Background(), "SECRET", "verifier", "nonce"); err == nil || strings.Contains(err.Error(), "SECRET") {
+					t.Fatal("exchange accepted failure or disclosed input", err)
+				}
+				if hits.Load() != 1 || redirected.Load() != 0 {
+					t.Fatal("code exchange replayed or redirected", hits.Load(), redirected.Load())
 				}
 			})
 		}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/soulteary/porter/internal/config"
+	"github.com/soulteary/porter/internal/outbound"
 	"golang.org/x/oauth2"
 )
 
@@ -25,11 +26,12 @@ type Adapter interface {
 	Exchange(context.Context, string, string, string) (Identity, error)
 }
 type OAuth struct {
-	Name        string
-	Config      oauth2.Config
-	Client      *http.Client
-	Verifier    *oidc.IDTokenVerifier
-	identityURL string
+	Name           string
+	Config         oauth2.Config
+	Client         *http.Client
+	ExchangeClient *http.Client
+	Verifier       *oidc.IDTokenVerifier
+	identityURL    string
 }
 
 func New(ctx context.Context, name string, p config.Provider, callback string, client *http.Client) (Adapter, error) {
@@ -43,7 +45,7 @@ func New(ctx context.Context, name string, p config.Provider, callback string, c
 		copy.Timeout = 10 * time.Second
 	}
 	client = &copy
-	a := &OAuth{Name: name, Client: client, Config: oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: callback}}
+	a := &OAuth{Name: name, Client: client, ExchangeClient: outbound.Exchange(client), Config: oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: callback}}
 	switch name {
 	case "github":
 		a.Config.Endpoint = oauth2.Endpoint{AuthURL: "https://github.com/login/oauth/authorize", TokenURL: "https://github.com/login/oauth/access_token", AuthStyle: oauth2.AuthStyleInParams}
@@ -52,6 +54,7 @@ func New(ctx context.Context, name string, p config.Provider, callback string, c
 		ctx = oidc.ClientContext(ctx, client)
 		p, e := oidc.NewProvider(ctx, "https://accounts.google.com")
 		if e != nil {
+			a.CloseIdleConnections()
 			return nil, errors.New("Google discovery failed")
 		}
 		a.Config.Endpoint = p.Endpoint()
@@ -92,7 +95,7 @@ func (a *OAuth) Exchange(ctx context.Context, code, verifier, nonce string) (Ide
 			OpenID      string `json:"openid"`
 			ErrCode     int    `json:"errcode"`
 		}
-		if e := a.getJSON(ctx, a.Config.Endpoint.TokenURL+"?"+q.Encode(), "", &r); e != nil || r.ErrCode != 0 || r.AccessToken == "" || r.OpenID == "" {
+		if e := a.getJSONWith(ctx, a.exchangeClient(), a.Config.Endpoint.TokenURL+"?"+q.Encode(), "", &r); e != nil || r.ErrCode != 0 || r.AccessToken == "" || r.OpenID == "" {
 			return id, errors.New("WeChat exchange failed")
 		}
 		id.Subject = r.OpenID
@@ -104,7 +107,7 @@ func (a *OAuth) Exchange(ctx context.Context, code, verifier, nonce string) (Ide
 			AccessToken string          `json:"access_token"`
 			Error       json.RawMessage `json:"error"`
 		}
-		if e := a.getJSON(ctx, a.Config.Endpoint.TokenURL+"?"+q.Encode(), "", &token); e != nil || len(token.Error) > 0 || token.AccessToken == "" {
+		if e := a.getJSONWith(ctx, a.exchangeClient(), a.Config.Endpoint.TokenURL+"?"+q.Encode(), "", &token); e != nil || len(token.Error) > 0 || token.AccessToken == "" {
 			return id, errors.New("QQ exchange failed")
 		}
 		q = url.Values{"access_token": {token.AccessToken}, "fmt": {"json"}}
@@ -120,7 +123,7 @@ func (a *OAuth) Exchange(ctx context.Context, code, verifier, nonce string) (Ide
 		return id, nil
 	}
 	opts := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, a.Client)
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, a.exchangeClient())
 	token, e := a.Config.Exchange(ctx, code, opts...)
 	if e != nil || token == nil || token.AccessToken == "" {
 		return id, errors.New("token exchange failed")
@@ -167,7 +170,22 @@ func (a *OAuth) Exchange(ctx context.Context, code, verifier, nonce string) (Ide
 	id.Subject = strconv.FormatInt(n, 10)
 	return id, nil
 }
+func (a *OAuth) CloseIdleConnections() {
+	a.Client.CloseIdleConnections()
+	if a.ExchangeClient != nil {
+		a.ExchangeClient.CloseIdleConnections()
+	}
+}
+func (a *OAuth) exchangeClient() *http.Client {
+	if a.ExchangeClient != nil {
+		return a.ExchangeClient
+	}
+	return a.Client // Hand-constructed protocol fixtures.
+}
 func (a *OAuth) getJSON(ctx context.Context, endpoint, token string, out any) error {
+	return a.getJSONWith(ctx, a.Client, endpoint, token, out)
+}
+func (a *OAuth) getJSONWith(ctx context.Context, client *http.Client, endpoint, token string, out any) error {
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if e != nil {
 		return errors.New("invalid upstream request")
@@ -177,7 +195,7 @@ func (a *OAuth) getJSON(ctx context.Context, endpoint, token string, out any) er
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, e := a.Client.Do(req)
+	resp, e := client.Do(req)
 	if e != nil {
 		return errors.New("upstream request failed")
 	}

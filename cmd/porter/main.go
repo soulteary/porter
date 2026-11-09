@@ -19,6 +19,7 @@ import (
 	"github.com/soulteary/porter/internal/diagnostic"
 	"github.com/soulteary/porter/internal/gateway"
 	"github.com/soulteary/porter/internal/operations"
+	"github.com/soulteary/porter/internal/outbound"
 	"github.com/soulteary/porter/internal/provider"
 	"github.com/soulteary/porter/internal/store"
 	versionkit "github.com/soulteary/version-kit/v4"
@@ -133,7 +134,8 @@ func serve(ctx context.Context, c config.Config, info *versionkit.Info, logs io.
 			ops.Log.Error().Msg("audit_shutdown_failed")
 		}
 	}()
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := outbound.New(10 * time.Second)
+	defer client.CloseIdleConnections()
 	adapters := map[string]provider.Adapter{}
 	for name, p := range c.Providers {
 		bounded, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -144,6 +146,7 @@ func serve(ctx context.Context, c config.Config, info *versionkit.Info, logs io.
 			return errors.New("provider initialization failed")
 		}
 		adapters[name] = a
+		defer a.(*provider.OAuth).CloseIdleConnections()
 	}
 	publicListener, e := net.Listen("tcp", c.Listen)
 	if e != nil {
@@ -158,7 +161,9 @@ func serve(ctx context.Context, c config.Config, info *versionkit.Info, logs io.
 	server := func(address string, handler http.Handler) *http.Server {
 		return &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	}
-	public := server(c.Listen, gateway.New(c, db, adapters, ops).Handler())
+	gateway := gateway.New(c, db, adapters, ops)
+	defer gateway.CloseIdleConnections()
+	public := server(c.Listen, gateway.Handler())
 	management := server(c.Operations.Listen, ops.Handler(c, info))
 	done := make(chan error, 2)
 	go func() { done <- public.Serve(publicListener) }()
