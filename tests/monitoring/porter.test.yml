@@ -79,6 +79,10 @@ tests:
         values: '9 9 9 0 0 0 0 0 0 0 0'
       - series: 'porter_audit_write_failures_total{job="porter",instance="healthy"}'
         values: '0+0x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="sparse",path="/auth",le="1"}'
+        values: '0+0x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="sparse",path="/auth",le="5"}'
+        values: '0+1x15'
       - series: 'porter_request_duration_seconds_bucket{job="porter",instance="sparse",path="/auth",le="+Inf"}'
         values: '0+1x15'
       - series: 'porter_request_duration_seconds_count{job="porter",instance="sparse",path="/auth"}'
@@ -99,11 +103,23 @@ tests:
         values: '0+10x15'
       - series: 'porter_request_duration_seconds_count{job="porter",instance="slow",path="/auth"}'
         values: '0+10x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="slow-callback",path="/callback/{provider}",le="1"}'
+        values: '0+0x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="slow-callback",path="/callback/{provider}",le="5"}'
+        values: '0+10x15'
+      - series: 'porter_request_duration_seconds_bucket{job="porter",instance="slow-callback",path="/callback/{provider}",le="+Inf"}'
+        values: '0+10x15'
+      - series: 'porter_request_duration_seconds_count{job="porter",instance="slow-callback",path="/callback/{provider}"}'
+        values: '0+10x15'
     alert_rule_test:
       - eval_time: 10m
         alertname: PorterAuthenticationLatency
         exp_alerts:
           - exp_labels: {job: porter, instance: slow, path: /auth, severity: warning}
+            exp_annotations:
+              summary: Porter authentication latency is elevated
+              description: Check upstream latency and storage contention. The threshold is an initial operating value, not a service-level guarantee.
+          - exp_labels: {job: porter, instance: slow-callback, path: '/callback/{provider}', severity: warning}
             exp_annotations:
               summary: Porter authentication latency is elevated
               description: Check upstream latency and storage contention. The threshold is an initial operating value, not a service-level guarantee.
