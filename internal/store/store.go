@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -278,6 +279,25 @@ func (s *Store) ReconcileBindings(active map[string]bool) error {
 				if e := cursor.Delete(); e != nil {
 					return e
 				}
+			}
+		}
+		return nil
+	})
+}
+
+// Check performs a read-only structural probe. It does not create, extend,
+// consume or revoke any authentication record.
+func (s *Store) Check(ctx context.Context) error {
+	if e := ctx.Err(); e != nil {
+		return e
+	}
+	return s.db.View(func(tx *bolt.Tx) error {
+		if e := ctx.Err(); e != nil {
+			return e
+		}
+		for _, name := range []string{"transactions", "sessions", "families"} {
+			if tx.Bucket([]byte(name)) == nil {
+				return errors.New("storage bucket unavailable")
 			}
 		}
 		return nil

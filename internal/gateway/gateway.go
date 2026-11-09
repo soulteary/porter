@@ -17,11 +17,13 @@ import (
 	"time"
 
 	"github.com/soulteary/porter/internal/config"
+	"github.com/soulteary/porter/internal/observe"
 	"github.com/soulteary/porter/internal/provider"
 	"github.com/soulteary/porter/internal/store"
 )
 
 type Gateway struct {
+	observer  observe.Observer
 	cfg       config.Config
 	db        *store.Store
 	providers map[string]provider.Adapter
@@ -34,9 +36,13 @@ type window struct {
 	until time.Time
 }
 
-func New(c config.Config, s *store.Store, p map[string]provider.Adapter) *Gateway {
+func New(c config.Config, s *store.Store, p map[string]provider.Adapter, observers ...observe.Observer) *Gateway {
 	u, _ := url.Parse(c.PublicURL)
-	return &Gateway{cfg: c, db: s, providers: p, origin: u, limits: map[string]window{}}
+	g := &Gateway{cfg: c, db: s, providers: p, origin: u, limits: map[string]window{}}
+	if len(observers) > 0 {
+		g.observer = observers[0]
+	}
+	return g
 }
 func (g *Gateway) Handler() http.Handler {
 	m := http.NewServeMux()
@@ -47,7 +53,7 @@ func (g *Gateway) Handler() http.Handler {
 	m.HandleFunc("POST /logout", g.logout)
 	m.HandleFunc("GET /auth", g.auth)
 	m.HandleFunc("GET /identity", g.identity)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return observe.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -58,7 +64,7 @@ func (g *Gateway) Handler() http.Handler {
 			return
 		}
 		m.ServeHTTP(w, r)
-	})
+	}), g.observer)
 }
 
 var page = template.Must(template.New("login").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Porter</title><h1>Sign in</h1>{{range .}}<form method="post" action="/login/{{.}}"><button type="submit">Continue with {{.}}</button></form>{{end}}<form method="post" action="/logout"><button type="submit">Sign out</button></form></html>`))
@@ -144,6 +150,7 @@ func (g *Gateway) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !g.permit(r) {
+		observe.Detail(r, "rate_limited", "")
 		w.Header().Set("Retry-After", "60")
 		http.Error(w, "login rate limited", http.StatusTooManyRequests)
 		return
@@ -202,6 +209,7 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 	tx, e := g.db.Consume(q.Get("state"), browser, name)
 	if e != nil {
 		if errors.Is(e, store.ErrMissing) {
+			observe.Detail(r, "invalid_transaction", "")
 			http.Error(w, "invalid login transaction", http.StatusBadRequest)
 		} else {
 			unavailable(w)
@@ -219,6 +227,7 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	id, e := p.Exchange(r.Context(), q.Get("code"), tx.Verifier, tx.Nonce)
 	if e != nil {
+		observe.Detail(r, "provider_authentication_failed", "")
 		http.Error(w, "provider authentication failed", http.StatusBadGateway)
 		return
 	}
@@ -228,9 +237,11 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	binding, linked := g.cfg.Resolve(id.Provider, id.Namespace, id.Subject)
 	if !linked {
+		observe.Detail(r, "identity_unlinked", "")
 		http.Error(w, "identity is not linked; contact the administrator", http.StatusForbidden)
 		return
 	}
+	observe.Detail(r, "", binding.UserID)
 	token, e := randomToken()
 	if e != nil {
 		unavailable(w)
@@ -239,6 +250,7 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 	expiry := time.Now().Add(time.Duration(g.cfg.SessionSeconds) * time.Second)
 	if e = g.db.RotateSession(token, g.readCookie(r, "session"), store.Record{Expires: expiry, Provider: id.Provider, Namespace: id.Namespace, Subject: id.Subject, Browser: tx.Browser, UserID: binding.UserID, Binding: binding.Revision()}); e != nil {
 		if errors.Is(e, store.ErrMissing) {
+			observe.Detail(r, "login_revoked", binding.UserID)
 			http.Error(w, "login was revoked", http.StatusBadRequest)
 		} else {
 			unavailable(w)
@@ -274,9 +286,11 @@ func (g *Gateway) check(w http.ResponseWriter, r *http.Request, identityOnly boo
 	}
 	b, ok := g.cfg.Resolve(s.Provider, s.Namespace, s.Subject)
 	if !ok || s.UserID != b.UserID || s.Binding != b.Revision() {
+		observe.Detail(r, "binding_changed", "")
 		http.Error(w, "identity is not linked", http.StatusForbidden)
 		return
 	}
+	observe.Detail(r, "", b.UserID)
 	if !identityOnly {
 		if g.cfg.StargateURL == "" {
 			http.Error(w, "authorization is not configured", http.StatusServiceUnavailable)
@@ -300,6 +314,11 @@ func (g *Gateway) logout(w http.ResponseWriter, r *http.Request) {
 	if !g.sameOrigin(r) {
 		http.Error(w, "invalid origin", http.StatusForbidden)
 		return
+	}
+	if g.observer != nil {
+		if current, e := g.db.Session(g.readCookie(r, "session")); e == nil {
+			observe.Detail(r, "", current.UserID)
+		}
 	}
 	if e := g.db.Revoke(g.readCookie(r, "session"), g.readCookie(r, "transaction")); e != nil {
 		unavailable(w)
@@ -325,6 +344,7 @@ func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request, b config.Bin
 	uri, method := r.Header.Get("X-Forwarded-Uri"), r.Header.Get("X-Forwarded-Method")
 	target, err := url.ParseRequestURI(uri)
 	if err != nil || !strings.HasPrefix(uri, "/") || strings.HasPrefix(uri, "//") || target.IsAbs() || len(uri) > 8192 || !validMethod(method) || r.Header.Get("X-Forwarded-Host") != g.origin.Host || r.Header.Get("X-Forwarded-Proto") != g.origin.Scheme {
+		observe.Detail(r, "invalid_authorization_context", b.UserID)
 		http.Error(w, "invalid authorization context", http.StatusServiceUnavailable)
 		return
 	}
@@ -352,6 +372,7 @@ func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request, b config.Bin
 		for _, key := range []string{"X-Auth-User", "X-Forwarded-User"} {
 			values := resp.Header.Values(key)
 			if len(values) != 1 || values[0] != b.UserID {
+				observe.Detail(r, "authorization_identity_mismatch", b.UserID)
 				http.Error(w, "authorization identity mismatch", http.StatusForbidden)
 				return
 			}

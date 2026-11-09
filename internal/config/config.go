@@ -6,14 +6,23 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
+
+	logger "github.com/soulteary/logger-kit/v3"
 )
+
+// ValidationError contains only application-owned field/rule messages, never a
+// configuration value. Parsing and filesystem errors retain their original types.
+type ValidationError struct{ message string }
+
+func (e *ValidationError) Error() string { return e.message }
 
 type Provider struct {
 	ClientID     string `json:"client_id"`
@@ -27,7 +36,16 @@ type Binding struct {
 	Mail      string `json:"mail,omitempty"`
 	Phone     string `json:"phone,omitempty"`
 }
+type Operations struct {
+	Listen              string `json:"listen,omitempty"`
+	Key                 string `json:"key,omitempty"`
+	AuditFile           string `json:"audit_file,omitempty"`
+	LogLevel            string `json:"log_level,omitempty"`
+	AuditQueueSize      int    `json:"audit_queue_size,omitempty"`
+	ProbeTimeoutSeconds int    `json:"probe_timeout_seconds,omitempty"`
+}
 type Config struct {
+	Operations            Operations          `json:"operations,omitempty"`
 	AllowInsecureStargate bool                `json:"allow_insecure_stargate,omitempty"`
 	StargateURL           string              `json:"stargate_url,omitempty"`
 	StargateSecret        string              `json:"stargate_secret,omitempty"`
@@ -58,7 +76,10 @@ func Load(path string) (Config, error) {
 	if e = d.Decode(&extra); e != io.EOF {
 		return c, errors.New("configuration must contain one JSON object")
 	}
-	return c, c.Validate()
+	if e = c.Validate(); e != nil {
+		return c, &ValidationError{message: e.Error()}
+	}
+	return c, nil
 }
 func clean(s string) bool {
 	return s != "" && strings.TrimSpace(s) == s && strings.IndexFunc(s, unicode.IsControl) < 0
@@ -131,10 +152,10 @@ func (c *Config) Validate() error {
 		switch name {
 		case "github", "google", "wechat", "qq":
 		default:
-			return fmt.Errorf("unsupported provider %q", name)
+			return errors.New("unsupported provider name")
 		}
 		if !clean(p.ClientID) || !clean(p.ClientSecret) {
-			return fmt.Errorf("provider %s requires credentials", name)
+			return errors.New("enabled providers require client_id and client_secret")
 		}
 	}
 	seen := map[string]bool{}
@@ -155,7 +176,7 @@ func (c *Config) Validate() error {
 		}
 		seen[key] = true
 	}
-	return nil
+	return c.validateOperations()
 }
 func (c Config) Resolve(provider, namespace, subject string) (Binding, bool) {
 	for _, b := range c.Bindings {
@@ -197,4 +218,58 @@ func origin(u *url.URL) string {
 		host = "[" + host + "]"
 	}
 	return u.Scheme + "://" + host
+}
+
+func (c *Config) validateOperations() error {
+	o := &c.Operations
+	if o.Listen == "" {
+		o.Listen = "127.0.0.1:9093"
+	}
+	if o.LogLevel == "" {
+		o.LogLevel = "info"
+	}
+	if o.AuditFile == "" {
+		o.AuditFile = filepath.Join(filepath.Dir(c.Database), "porter-audit.jsonl")
+	}
+	if o.AuditQueueSize == 0 {
+		o.AuditQueueSize = 1024
+	}
+	if o.ProbeTimeoutSeconds == 0 {
+		o.ProbeTimeoutSeconds = 2
+	}
+	host, port, e := net.SplitHostPort(o.Listen)
+	if e != nil {
+		return errors.New("operations.listen requires host:port")
+	}
+	number, e := strconv.Atoi(port)
+	if e != nil || number < 0 || number > 65535 {
+		return errors.New("invalid operations listener port")
+	}
+	if o.Key == "" && !loopback(host) {
+		return errors.New("non-loopback operations listener requires operations.key")
+	}
+	if o.Key != "" && (len(o.Key) < 32 || !clean(o.Key)) {
+		return errors.New("operations.key requires at least 32 characters")
+	}
+	if o.Key != "" && (o.Key == c.ProxyKey || o.Key == c.StargateSecret) {
+		return errors.New("operations.key must differ from proxy_key and stargate_secret")
+	}
+	if _, e = logger.ParseLevel(o.LogLevel); e != nil {
+		return errors.New("invalid operations.log_level")
+	}
+	if o.AuditQueueSize < 1 || o.AuditQueueSize > 65536 {
+		return errors.New("operations.audit_queue_size must be between 1 and 65536")
+	}
+	if o.ProbeTimeoutSeconds < 1 || o.ProbeTimeoutSeconds > 10 {
+		return errors.New("operations.probe_timeout_seconds must be between 1 and 10")
+	}
+	audit, e := filepath.Abs(o.AuditFile)
+	if e != nil {
+		return errors.New("invalid audit file path")
+	}
+	database, e := filepath.Abs(c.Database)
+	if e != nil || audit == database {
+		return errors.New("audit file must be separate from the session database")
+	}
+	return nil
 }

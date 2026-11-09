@@ -24,7 +24,8 @@ Go 1.27.3 or later is required.
 3. Set credentials, a random proxy key of at least 32 characters, and the actual
    public origin. Configure administrator-verified identity bindings.
 4. Register `https://YOUR_HOST/callback/PROVIDER` as each application's callback.
-5. Run `go run ./cmd/porter -config /path/to/porter.json` behind an HTTPS proxy.
+5. Run `go run ./cmd/porter serve -config /path/to/porter.json` behind an HTTPS proxy.
+   The existing `porter -config ...` invocation remains supported.
 
 Only configured providers are enabled. Google discovery must succeed at startup.
 Use `openssl rand -hex 32` to generate the proxy key. The example contains placeholders,
@@ -150,25 +151,146 @@ establish a live provider or Warden deployment.
 
 ## Operations
 
+Porter uses `audit-kit/v2`, `logger-kit/v3`, `health-kit/v4`, `metrics-kit/v3`,
+`version-kit/v4` and `preflight-kit`. Authentication decisions stay in the
+existing gateway; instrumentation receives only fixed action/reason/provider
+names, a generated request ID and an internal user ID when known.
+
+### Management listener
+
+Management endpoints are served on a **separate listener**, default
+`127.0.0.1:9093`. They are not added to the public authentication server or the
+Nginx application route. Keep that listener private.
+
+- `GET /healthz`: process liveness; dependency failure does not change liveness.
+- `GET /readyz`: draining state, a read-only bbolt structural probe, latest
+  maintenance result and, when configured, Stargate's `/readyz` status.
+- `GET /metrics`: HTTP/authentication outcomes, audit loss/queue and Go/process
+  metrics from a private Prometheus registry.
+- `GET /version`: version, commit, build date and runtime metadata.
+
+Without `operations.key`, the listener must bind to loopback and every request
+must come directly from a loopback peer with a loopback/localhost Host.
+Non-loopback Host values are rejected to prevent DNS rebinding. Forwarded IP
+and Host headers are ignored.
+A non-loopback listener requires a separate key of at least 32 characters:
+`Authorization: Bearer <operations.key>`. When a key is configured, it is required
+on loopback too. Query parameters and the proxy credential are not alternative
+management authentication methods. Configuration rejects a management key equal
+to `proxy_key` or `stargate_secret`.
+
+`operations.listen`, `operations.key`, `operations.audit_file`,
+`operations.log_level`, `operations.audit_queue_size` and
+`operations.probe_timeout_seconds` are optional JSON fields under `operations`.
+Defaults are loopback port 9093, no key, `porter-audit.jsonl` beside the database,
+`info`, 1024 records and two seconds. Queue capacity is limited to 65536 records;
+probe timeout must be between one and ten seconds.
+
+The storage probe does not create, extend, consume or revoke records. Its result
+proves read access and required bucket presence, not every possible future write.
+A blocked read is limited to one outstanding probe. Readiness returns 503 for a
+critical failure or graceful shutdown. In identity-only mode the unconfigured
+Stargate check is disabled; readiness is not proof that `/auth` can authorize.
+The Stargate probe sends no credentials or identity, rejects redirects, and does
+not call `/_auth`. It does not prove that shared secrets, directory mappings or a
+provider application are correct. Provider token endpoints are never probed.
+
+### Logging and audit
+
+Structured JSON logs use fixed route/action/result/reason fields and a generated
+`X-Request-ID`; a client-supplied request ID is not trusted. Routine successful
+`/auth` and `/identity` checks are debug-level logs; login and logout are info-level,
+and rejections are warnings. There is no runtime log-level mutation endpoint.
+
+The audit journal is owner-only JSON Lines. It records login starts, callback
+success/failure, logout, rate limits and failed access/identity checks. Successful
+access checks are counted in metrics but are not appended on every business
+request. Records contain internal user IDs when already known, never external
+subjects, email/phone, raw URLs, query strings, cookies, authorization headers,
+user agents, upstream response bodies or tokens.
+
+Audit delivery is best-effort through one worker and a bounded queue. Queue
+rejections increment `porter_audit_dropped_total`; failed writes increment
+`porter_audit_write_failures_total` and emit a generic error. Queue depth is
+`porter_audit_queue_length`. Failures do not change authentication results or
+turn a rejection into success. Graceful shutdown stops both listeners and drains
+the audit queue; this is not a transactional outbox or a power-loss durability
+guarantee. Runtime audit failure does not fail readiness; monitor the loss counters.
+
+Provision an owner-writable audit directory. Existing audit files must be regular
+files with no group/other permissions, and must not alias the session database.
+The writer retains the verified file descriptor and rejects a symbolic-link
+destination. The service does not silently chmod existing files. Arrange log retention and
+rotation externally; restart after rotating the journal so the new file is opened.
+Logs and metrics do not contain account identifiers; the private audit journal
+can contain internal user IDs. Metric routes, methods, actions, reasons and
+providers use bounded application-owned labels, not request paths or subjects.
+
+### Commands and deployment checks
+
+```sh
+porter version --json
+porter check-config -config /path/to/porter.json --json
+porter doctor -config /path/to/porter.json --json
+porter doctor -config /path/to/porter.json --network --json
+```
+
+`version` (also `--version`) does not load configuration. `check-config` validates
+syntax and rules without opening the database, creating an audit writer or
+starting a listener. Configuration failures report safe rule messages, not
+private paths, unknown JSON field names or values.
+
+`doctor` uses preflight-kit to check directory create/remove access, existing
+file modes and whether the audit destination aliases the database. It creates
+and removes temporary probe files in configured directories, but does not open
+or reconcile the database or create the journal. A missing private data file is
+a warning on first deployment. Network access is off unless `--network` is set;
+that flag adds only the bounded Stargate readiness request. Results redact
+internal paths and dependency response/error contents. Error findings exit nonzero;
+warnings alone do not. Neither command establishes a real login.
+
 Mount a private persistent directory for the database. Do not share a database
 between replicas, place it on a network filesystem, or run multiple writers.
 bbolt takes an exclusive process lock. Back up the database only while Porter is
 stopped or through an appropriate bbolt snapshot procedure. An expired record is
 rejected even before the minute-by-minute cleanup removes it.
 
-Login starts are limited to 30 per minute per direct network peer. Forwarded
-client IP headers are ignored. Behind a proxy this is a shared limit; apply an
-additional client limit at the edge. Each database bucket has a 10,000-record cap.
-Capacity exhaustion returns 503 and does not bypass authentication.
+Login starts are still limited to 30 per minute per direct network peer.
+Forwarded client IP headers are ignored. Behind a proxy this is a shared limit;
+apply an additional client limit at the edge. Each database bucket has a
+10,000-record cap. Capacity exhaustion returns 503 without bypassing authentication.
 
 Disable query-string logging for callback URLs and upstream HTTP instrumentation:
 WeChat and QQ require credentials/tokens in some protocol query parameters.
 Do not log request URLs, cookies, config contents or authorization headers.
 Porter rejects upstream redirects instead of forwarding credentials to another host.
 
-`docker build -t porter .` builds a non-root Linux image. Mount the config at
-`/etc/porter/porter.json` and an owner-writable data directory at `/data`; use
-`/data/porter.db` as the database path. TLS terminates at the proxy.
+### Build metadata and upgrade
+
+```sh
+docker build -t porter . \
+  --build-arg VERSION=v0.1.0 \
+  --build-arg COMMIT="$(git rev-parse HEAD)" \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+For a native build, set `main.version`, `main.commit` and `main.buildDate` with
+`go build -ldflags`. Unspecified values remain `dev`/`unknown`; no release version
+is inferred. The non-root image still runs the public service on port 8083.
+Mount config at `/etc/porter/porter.json`, a writable private data directory at
+`/data`, and use `/data/porter.db`. Management port 9093 remains loopback-only
+unless explicitly reconfigured with a management key. Do not publish it as a
+public application route. HTTP management access requires a trusted private
+network or separate TLS termination.
+
+Before upgrading, provision the audit path and reserve the management listener;
+run `check-config` and `doctor`. A journal that cannot be opened or a management
+listener that cannot bind prevents startup. Existing authentication records,
+namespace/binding rules, session deadlines, revocations and Stargate headers are
+unchanged. No database reset or session migration is required for this phase.
+Configuration still loads once at startup. Rollback requires removing the new
+`operations` configuration section before using a previous strict config parser;
+retain the database and audit journal.
 
 ## Validation
 
@@ -181,7 +303,10 @@ go build ./cmd/porter
 Tests cover local provider responses, cryptographically signed Google tokens,
 transaction binding and single consumption, session persistence/expiry/revocation,
 configuration rejection, logout/exchange races, mapping reconciliation, original
-request forwarding, identity mismatches and closed storage failures.
+request forwarding, identity mismatches and closed storage failures. The safety
+suite runs with the observation wrapper enabled. Additional tests cover journal
+loss/redaction/draining, management isolation, bounded readiness, command side
+effects, graceful shutdown and version output.
 
 Chromium acceptance submits the real HTML forms, intercepts only provider
 authorization navigation, and checks callbacks, secure cookies and logout:

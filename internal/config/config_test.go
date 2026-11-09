@@ -76,3 +76,39 @@ func TestCanonicalPublicOrigin(t *testing.T) {
 		t.Fatal("origin with empty query delimiter accepted")
 	}
 }
+
+func TestOperationsConfiguration(t *testing.T) {
+	c := valid()
+	if e := c.Validate(); e != nil || c.Operations.Listen != "127.0.0.1:9093" || c.Operations.AuditQueueSize != 1024 {
+		t.Fatal(c.Operations, e)
+	}
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.Operations.Listen = "0.0.0.0:9093" },
+		func(c *Config) { c.Operations.Key = "short" },
+		func(c *Config) { c.Operations.LogLevel = "unknown" },
+		func(c *Config) { c.Operations.AuditQueueSize = 65537 },
+		func(c *Config) { c.Operations.ProbeTimeoutSeconds = 11 },
+		func(c *Config) { c.Operations.AuditFile = "porter.db" },
+	} {
+		c = valid()
+		mutate(&c)
+		if c.Validate() == nil {
+			t.Fatal("unsafe operations configuration accepted")
+		}
+	}
+	c = valid()
+	c.Operations.Listen = ":9093"
+	c.Operations.Key = strings.Repeat("m", 32)
+	if e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestManagementKeyCannotReuseAuthenticationCredentials(t *testing.T) {
+	for _, key := range []string{strings.Repeat("p", 32), strings.Repeat("s", 32)} {
+		c := Config{PublicURL: "https://porter.test", LandingURL: "https://porter.test/app", ProxyKey: strings.Repeat("p", 32), StargateURL: "https://stargate.test/_auth", StargateSecret: strings.Repeat("s", 32), Providers: map[string]Provider{"github": {ClientID: "app", ClientSecret: "secret"}}, Operations: Operations{Key: key}}
+		if err := c.Validate(); err == nil || strings.Contains(err.Error(), key) {
+			t.Fatal("reused management credential accepted or disclosed", err)
+		}
+	}
+}

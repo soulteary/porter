@@ -20,7 +20,9 @@ jobs:
       - run: test -z "$(gofmt -l cmd internal)"
       - run: go vet ./...
       - run: go test -race -coverprofile=coverage.out ./...
-      - run: go build ./cmd/porter
+      - run: go build -ldflags="-X main.version=ci -X main.commit=${GITHUB_SHA}" ./cmd/porter
+      - name: Version metadata
+        run: ./porter version --json | python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data["version"] == "ci" and data["commit"] == os.environ["GITHUB_SHA"]'
       - name: Chromium login form acceptance
         run: |
           export PORTER_CHROME="$(command -v google-chrome)"

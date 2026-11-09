@@ -27,5 +27,12 @@
   "bindings": [],
   "stargate_url": "http://stargate:8080/_auth",
   "stargate_secret": "REPLACE_WITH_STARGATE_SHARED_SECRET",
-  "allow_insecure_stargate": true
+  "allow_insecure_stargate": true,
+  "operations": {
+    "listen": "127.0.0.1:9093",
+    "audit_file": "/data/porter-audit.jsonl",
+    "log_level": "info",
+    "audit_queue_size": 1024,
+    "probe_timeout_seconds": 2
+  }
 }
