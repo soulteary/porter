@@ -2,6 +2,7 @@
 """Offline, metadata-only audit retention. Dry run unless --apply --stopped."""
 import argparse
 import datetime as dt
+import fcntl
 import os
 import re
 import stat
@@ -33,6 +34,7 @@ def maintain(directory, journal="porter-audit.jsonl", database="porter.db", days
     cutoff = now - dt.timedelta(days=days)
     pattern = re.compile(re.escape(journal) + r"\.(\d{8}T\d{12}Z)$")
     descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    database_lock = None
     try:
         if stat.S_IMODE(os.fstat(descriptor).st_mode) & 0o077:
             raise UnsafeDestination("audit directory must be owner-only")
@@ -42,6 +44,15 @@ def maintain(directory, journal="porter-audit.jsonl", database="porter.db", days
         private_regular(active)
         if same(db, active):
             raise UnsafeDestination("audit destination aliases database")
+        if apply:
+            # bbolt holds an exclusive flock while the database is open. Take
+            # the same nonblocking lock without reading or writing database
+            # contents, and hold it through rotation and archive deletion.
+            database_lock = os.open(database, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                    dir_fd=descriptor)
+            if not same(db, os.fstat(database_lock)):
+                raise UnsafeDestination("database changed during planning")
+            fcntl.flock(database_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         expired = []
         for name in os.listdir(descriptor):
             match = pattern.fullmatch(name)
@@ -94,6 +105,8 @@ def maintain(directory, journal="porter-audit.jsonl", database="porter.db", days
                 os.unlink(name, dir_fd=descriptor)
         return {"applied": apply, "rotate": rotate, "expired_archives": len(expired)}
     finally:
+        if database_lock is not None:
+            os.close(database_lock)
         os.close(descriptor)
 
 
@@ -110,6 +123,9 @@ def main():
     try:
         result = maintain(args.directory, args.journal, args.database, args.keep_days,
                           args.rotate, args.apply, args.stopped)
+    except BlockingIOError:
+        print("audit retention refused: database is in use; stop Porter before applying changes", file=sys.stderr)
+        return 1
     except (OSError, UnsafeDestination):
         print("audit retention failed; check stopped state, private paths, ownership and mount access", file=sys.stderr)
         return 1

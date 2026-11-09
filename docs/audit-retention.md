@@ -4,7 +4,8 @@ Porter's audit-kit worker remains bounded and best effort. The runtime writes to
 one validated file descriptor; it does not watch path changes or rotate files.
 The helper in `tools/audit-retention.py` is an offline operator tool, not a service
 endpoint or background worker. It only inspects file metadata; it never reads
-journal contents or opens the session database for writing.
+journal contents or opens the session database for writing. Applied operations
+open the database read-only solely to hold its exclusive advisory lock.
 
 ## Plan, stop, apply, restart
 
@@ -23,9 +24,13 @@ docker compose -f examples/compose.yml up -d porter
 
 The first command is a metadata-only dry run. Check that the stop actually
 completed before applying changes. `--stopped` is an operator acknowledgement,
-not process detection or a lock. The helper cannot inspect another container's
-open descriptors. Never run it concurrently with Porter or another retention
-process. Do not use `copytruncate`, live file replacement, or a second writer.
+not process detection. Applied operations also take a nonblocking exclusive
+database lock compatible with bbolt and hold it until rotation/deletion finishes.
+An active Porter or another retention process holding that database lock causes
+a failure before files are modified. Dry runs remain metadata-only and do not
+take this lock. A busy-lock diagnostic contains no database path or contents.
+Stop Porter before applying changes, even with this safeguard. Do not use
+`copytruncate`, live file replacement, or a second writer.
 All examples assume the same Compose environment and persistent data directory
 as the deployment. Use `--journal` and `--database` for different basenames.
 
@@ -65,7 +70,7 @@ using private host-level diagnostics; do not add raw paths, contacts or tokens t
 public metrics or alerts.
 
 Run `python3 -m unittest discover -s tests/audit -v` for dry-run, retention,
-collision, alias, permissions and restoration checks. The Go operations tests
+collision, alias, permissions, database locking and restoration checks. The Go operations tests
 verify that restart writes into the new journal, keeps the old archive intact,
 and preserves session deadlines. Existing audit saturation/write-failure and
 production upgrade tests remain required.

@@ -1,8 +1,11 @@
 package operations
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -71,5 +74,53 @@ func TestAuditRestartAfterOfflineRotationKeepsSessionDeadline(t *testing.T) {
 	session, err := db.Session("token")
 	if err != nil || !session.Expires.Equal(deadline) {
 		t.Fatal("audit rotation changed session state", err)
+	}
+}
+
+func TestOfflineRetentionRefusesAnOpenBboltDatabase(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is required for retention integration")
+	}
+	c := configuration(t)
+	if err := os.Chmod(filepath.Dir(c.Database), 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(c.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	original := []byte("SECRET audit content\n")
+	if err = os.WriteFile(c.Operations.AuditFile, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	invoke := func() ([]byte, error) {
+		return exec.Command(python, "../../tools/audit-retention.py", "--directory", filepath.Dir(c.Database), "--journal", filepath.Base(c.Operations.AuditFile), "--database", filepath.Base(c.Database), "--rotate", "--apply", "--stopped").CombinedOutput()
+	}
+	output, err := invoke()
+	if err == nil || !strings.Contains(string(output), "database is in use") {
+		t.Fatal("retention did not reject the open bbolt database with a safe busy diagnostic")
+	}
+	if strings.Contains(string(output), "SECRET") || strings.Contains(string(output), filepath.Dir(c.Database)) {
+		t.Fatal("retention disclosed sensitive context")
+	}
+	current, err := os.ReadFile(c.Operations.AuditFile)
+	if err != nil || string(current) != string(original) {
+		t.Fatal("locked database did not prevent journal changes", err)
+	}
+	before, err := os.ReadFile(c.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if output, err = invoke(); err != nil {
+		t.Fatalf("retention failed after bbolt closed: %s", output)
+	}
+	after, err := os.ReadFile(c.Database)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("retention changed database contents", err)
 	}
 }

@@ -1,4 +1,5 @@
 import datetime as dt
+import fcntl
 import importlib.util
 import os
 import pathlib
@@ -87,3 +88,28 @@ class Retention(unittest.TestCase):
         self.assertEqual(self.journal.read_bytes(), b"SECRET audit content\n")
         self.assertEqual(self.db.read_bytes(), b"session state")
         self.assertFalse((self.dir / "porter-audit.jsonl.20261110T000000000000Z").exists())
+
+    def test_live_database_lock_prevents_all_mutations(self):
+        old = self.write("porter-audit.jsonl.20200101T000000000000Z", b"old")
+        with self.db.open("rb") as live:
+            fcntl.flock(live, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Dry runs remain useful while Porter is running.
+            r.maintain(self.dir, rotate=True, now=NOW)
+            with self.assertRaises(BlockingIOError):
+                r.maintain(self.dir, rotate=True, apply=True, stopped=True, now=NOW)
+            self.assertEqual(self.journal.read_bytes(), b"SECRET audit content\n")
+            self.assertEqual(old.read_bytes(), b"old")
+        r.maintain(self.dir, rotate=True, apply=True, stopped=True, now=NOW)
+        self.assertFalse(old.exists())
+
+    def test_database_lock_is_held_during_rotation(self):
+        link = r.os.link
+        def checked_link(*args, **kwargs):
+            with self.db.open("rb") as contender:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return link(*args, **kwargs)
+        with mock.patch.object(r.os, "link", side_effect=checked_link):
+            r.maintain(self.dir, rotate=True, apply=True, stopped=True, now=NOW)
+        with self.db.open("rb") as after:
+            fcntl.flock(after, fcntl.LOCK_EX | fcntl.LOCK_NB)
