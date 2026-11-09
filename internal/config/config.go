@@ -2,10 +2,13 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -25,17 +28,18 @@ type Binding struct {
 	Phone     string `json:"phone,omitempty"`
 }
 type Config struct {
-	StargateURL    string              `json:"stargate_url,omitempty"`
-	StargateSecret string              `json:"stargate_secret,omitempty"`
-	Listen         string              `json:"listen"`
-	PublicURL      string              `json:"public_url"`
-	LandingURL     string              `json:"landing_url"`
-	Database       string              `json:"database"`
-	ProxyKey       string              `json:"proxy_key"`
-	Development    bool                `json:"development"`
-	SessionSeconds int                 `json:"session_seconds"`
-	Providers      map[string]Provider `json:"providers"`
-	Bindings       []Binding           `json:"bindings"`
+	AllowInsecureStargate bool                `json:"allow_insecure_stargate,omitempty"`
+	StargateURL           string              `json:"stargate_url,omitempty"`
+	StargateSecret        string              `json:"stargate_secret,omitempty"`
+	Listen                string              `json:"listen"`
+	PublicURL             string              `json:"public_url"`
+	LandingURL            string              `json:"landing_url"`
+	Database              string              `json:"database"`
+	ProxyKey              string              `json:"proxy_key"`
+	Development           bool                `json:"development"`
+	SessionSeconds        int                 `json:"session_seconds"`
+	Providers             map[string]Provider `json:"providers"`
+	Bindings              []Binding           `json:"bindings"`
 }
 
 func Load(path string) (Config, error) {
@@ -69,6 +73,9 @@ func webURL(s string, dev bool) bool {
 func (c *Config) Validate() error {
 	if c.Listen == "" {
 		c.Listen = ":8083"
+		if c.Development {
+			c.Listen = "127.0.0.1:8083"
+		}
 	}
 	if c.Database == "" {
 		c.Database = "porter.db"
@@ -79,16 +86,23 @@ func (c *Config) Validate() error {
 	if !webURL(c.PublicURL, c.Development) || !webURL(c.LandingURL, c.Development) {
 		return errors.New("public_url and landing_url require HTTPS (loopback HTTP allowed in development)")
 	}
+	if c.Development {
+		u, _ := url.Parse(c.PublicURL)
+		host, _, e := net.SplitHostPort(c.Listen)
+		if !loopback(u.Hostname()) || e != nil || !loopback(host) {
+			return errors.New("development requires a loopback public URL and listener")
+		}
+	}
 	landing, _ := url.Parse(c.LandingURL)
 	public, _ := url.Parse(c.PublicURL)
-	if landing.Scheme != public.Scheme || landing.Host != public.Host {
+	if origin(landing) != origin(public) {
 		return errors.New("landing_url must share public_url origin; cross-domain sessions are not supported")
 	}
 	u, _ := url.Parse(c.PublicURL)
-	if u.Path != "" && u.Path != "/" || u.RawQuery != "" {
+	if u.Path != "" && u.Path != "/" || (u.RawQuery != "" || u.ForceQuery) {
 		return errors.New("public_url must be an origin")
 	}
-	c.PublicURL = strings.TrimSuffix(c.PublicURL, "/")
+	c.PublicURL = origin(public)
 	if len(c.ProxyKey) < 32 || !clean(c.ProxyKey) {
 		return errors.New("proxy_key must contain at least 32 characters without surrounding whitespace or control characters")
 	}
@@ -100,8 +114,11 @@ func (c *Config) Validate() error {
 	}
 	if c.StargateURL != "" {
 		u, e := url.Parse(c.StargateURL)
-		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || (u.Scheme != "http" && u.Scheme != "https") || u.Path != "/_auth" {
+		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" || (u.Scheme != "http" && u.Scheme != "https") || u.Path != "/_auth" {
 			return errors.New("stargate_url must be an HTTP(S) /_auth endpoint without credentials or query")
+		}
+		if u.Scheme == "http" && !loopback(u.Hostname()) && !c.AllowInsecureStargate {
+			return errors.New("non-loopback HTTP Stargate requires allow_insecure_stargate")
 		}
 		if len(c.StargateSecret) < 32 || !clean(c.StargateSecret) {
 			return errors.New("stargate_secret requires at least 32 characters")
@@ -147,4 +164,37 @@ func (c Config) Resolve(provider, namespace, subject string) (Binding, bool) {
 		}
 	}
 	return Binding{}, false
+}
+
+func loopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// Revision binds a session to the exact administrator-approved identity mapping.
+func (b Binding) Revision() string {
+	data, _ := json.Marshal(b)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// origin uses the browser's default-port and host casing rules for Origin checks.
+func origin(u *url.URL) string {
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	port := u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return u.Scheme + "://" + host
 }

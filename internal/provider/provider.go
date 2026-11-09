@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/soulteary/porter/internal/config"
@@ -32,6 +33,16 @@ type OAuth struct {
 }
 
 func New(ctx context.Context, name string, p config.Provider, callback string, client *http.Client) (Adapter, error) {
+	// Adapter safety must not depend on the caller's redirect policy.
+	if client == nil {
+		client = http.DefaultClient
+	}
+	copy := *client
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if copy.Timeout <= 0 || copy.Timeout > 10*time.Second {
+		copy.Timeout = 10 * time.Second
+	}
+	client = &copy
 	a := &OAuth{Name: name, Client: client, Config: oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: callback}}
 	switch name {
 	case "github":
@@ -46,7 +57,7 @@ func New(ctx context.Context, name string, p config.Provider, callback string, c
 		a.Config.Endpoint = p.Endpoint()
 		a.Config.Endpoint.AuthStyle = oauth2.AuthStyleInParams
 		a.Config.Scopes = []string{oidc.ScopeOpenID}
-		a.Verifier = p.Verifier(&oidc.Config{ClientID: a.Config.ClientID})
+		a.Verifier = p.Verifier(&oidc.Config{ClientID: a.Config.ClientID, SupportedSigningAlgs: []string{oidc.RS256}})
 	case "wechat":
 		a.Config.Endpoint = oauth2.Endpoint{AuthURL: "https://open.weixin.qq.com/connect/qrconnect", TokenURL: "https://api.weixin.qq.com/sns/oauth2/access_token"}
 	case "qq":
@@ -125,6 +136,11 @@ func (a *OAuth) Exchange(ctx context.Context, code, verifier, nonce string) (Ide
 		}
 		if nonce == "" || subtle.ConstantTimeCompare([]byte(t.Nonce), []byte(nonce)) != 1 || t.Subject == "" {
 			return id, errors.New("invalid ID token nonce or subject")
+		}
+		if t.AccessTokenHash != "" {
+			if e = t.VerifyAccessToken(token.AccessToken); e != nil {
+				return id, errors.New("invalid access token hash")
+			}
 		}
 		var claims struct {
 			AZP string `json:"azp"`

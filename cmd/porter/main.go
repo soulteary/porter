@@ -37,6 +37,13 @@ func run() error {
 	if e = db.Prune(time.Now()); e != nil {
 		return e
 	}
+	active := map[string]bool{}
+	for _, binding := range c.Bindings {
+		active[binding.Revision()] = true
+	}
+	if e = db.ReconcileBindings(active); e != nil {
+		return e
+	}
 	// Never follow upstream redirects carrying credentials or tokens.
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	adapters := map[string]provider.Adapter{}

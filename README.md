@@ -30,15 +30,21 @@ Only configured providers are enabled. Google discovery must succeed at startup.
 Use `openssl rand -hex 32` to generate the proxy key. The example contains placeholders,
 not working credentials. Do not commit the real configuration or database.
 
-`public_url` must be an origin without a path or query. `landing_url` must share
+`public_url` must be an origin without a path or query. Host casing and default
+ports are normalized to the browser's Origin representation. `landing_url` must share
 that origin, because the session cookie is host-only. Production cookies use the
 `__Host-` prefix, Secure, HttpOnly, SameSite=Lax and Path=/.
 `development: true` permits loopback HTTP and uses unprefixed, non-Secure cookies;
-it must not be used for a remotely accessible deployment.
+validation requires a loopback public URL and a loopback listener (default
+`127.0.0.1:8083`).
 
 The config is loaded once. Restart to apply binding changes; existing sessions
-are resolved against the new bindings on every check. Removing a binding disables
-that external identity. Database persistence does not extend absolute deadlines.
+carry a fingerprint of the exact binding. Editing or removing that binding
+invalidates its sessions, and startup reconciliation deletes those sessions so a
+later configuration rollback cannot revive them. Database persistence does not
+extend absolute deadlines. Sessions and pending transactions from the initial
+PR implementation require a new login after this storage change; no database
+reset is required.
 
 ## Identity bindings
 
@@ -58,37 +64,49 @@ from a trusted administrative process and independently verify ownership of both
 accounts. No user profile email or UnionID is used to create or merge bindings.
 WeChat UnionID and QQ UnionID are intentionally not required.
 
-The mapped phone/mail must resolve to the intended Warden account. Warden remains
-its authority: coordinate contact reassignment with mapping updates. Porter does
-not validate that directory relationship or grant roles. `X-Porter-User-ID` is a
-mapping label, not evidence that Warden has authorized that ID. Downstream apps
-must use Stargate's authorization headers, not Porter headers.
+The mapped phone/mail must resolve to the intended Warden account. On `/auth`,
+Porter requires exactly one `X-Auth-User` and `X-Forwarded-User` from Stargate, both
+matching the configured internal `user_id`. A reassigned contact, missing identity
+header or ambiguous response is rejected before any authorization headers are
+returned. Porter does not grant roles. `/identity` reports only the configured
+identity; downstream apps must use `/auth` and Stargate's authorization headers.
 
 ## HTTP API
 
 - `GET /login`: provider selection and logout form.
 - `POST /login/{github|google|wechat|qq}`: start a login. Requires the exact public
   `Origin`; creates a five-minute browser-bound transaction. One outstanding login
-  per browser is supported; starting again replaces the transaction cookie.
+  per browser is supported; starting again revokes the previous pending login.
+  A 200 HTML response navigates separately to the provider, keeping external
+  redirects out of the form submission's CSP scope. The login page uses
+  `Referrer-Policy: same-origin` to preserve its forms' Origin header; navigation
+  and callback responses retain `no-referrer`.
 - `GET /callback/{provider}`: consume the transaction, authenticate upstream,
   require a configured binding, rotate the session and redirect to the fixed
   landing URL. No client-supplied return URL is accepted.
-- `GET /auth`: private proxy identity check. Requires
-  `Authorization: Bearer <proxy_key>` and the browser session cookie. Returns 200
-  with `X-Porter-User-ID` and exactly one of `X-User-Mail` / `X-User-Phone`.
-  With `stargate_url` and `stargate_secret` configured, it instead calls Stargate
-  server-to-server and returns only allowlisted authorization headers on success.
-  Stargate 401/403 responses are preserved; redirects and other failures become 503.
-  Returns 401 for missing/expired sessions or invalid proxy credentials, 403 for
-  removed bindings, and 503 for storage failures. It does not redirect.
-- `POST /logout`: exact-origin request; revoke the local session and clear the
-  cookie. It does not revoke upstream grants or sign out of the provider.
+- `GET /auth`: private proxy authorization check. Requires
+  `Authorization: Bearer <proxy_key>`, the browser session cookie, Stargate settings,
+  and original request context: `X-Forwarded-Uri`, `X-Forwarded-Method`,
+  `X-Forwarded-Host` and `X-Forwarded-Proto`. The proxy must overwrite these headers.
+  Host and scheme must match `public_url`; URI must be a local request target.
+  Returns only allowlisted authorization headers after a matching Stargate success.
+  Returns 401 for invalid proxy credentials or missing/expired/revoked sessions,
+  403 for changed bindings or a mismatched Stargate identity, and 503 for missing
+  Stargate configuration, invalid request context, storage or dependency failures.
+  Stargate 401/403 are preserved; redirects are rejected. It never redirects.
+- `GET /identity`: private identity-only export, with the same proxy credential
+  and session requirements. Returns `X-Porter-User-ID` and one configured contact.
+  This endpoint does not authorize access and is not used by the Nginx example.
+- `POST /logout`: exact-origin request; revoke the session and pending login
+  family, including a callback already exchanging a code, and clear both cookies. It does not revoke upstream grants or sign out of the provider.
 - `GET /healthz`: process liveness only, not provider or directory readiness.
 
 All responses use `Cache-Control: no-store`. Provider errors are not reflected.
 Upstream access tokens are used only within the callback request, never persisted.
 State and session database keys are SHA-256 hashes of random 256-bit values.
 Transactions are consumed atomically before exchange; failures require a new login.
+Session creation and account switching are atomic. A revoked login family cannot
+issue a session; authorization rechecks session validity after the Stargate call.
 There are no automatic code-exchange retries.
 
 ## Stargate integration
@@ -96,9 +114,11 @@ There are no automatic code-exchange retries.
 See `examples/nginx.conf` for a same-origin Nginx `auth_request` arrangement:
 
 1. Nginx checks Porter through one private subrequest, passing the session cookie
-   and a proxy credential.
+   and a proxy credential. It overwrites the original URI, method, host and scheme
+   from its own request variables, including for non-GET application requests.
 2. Porter validates the session and identity binding. With `stargate_url` and
-   `stargate_secret` configured, it sends the configured contact to Stargate's
+   `stargate_secret` configured, it sends the configured contact and original
+   request context to Stargate's
    `/_auth` endpoint, using `X-Stargate-Header-Auth` and `Accept: application/json`.
 3. Stargate resolves the contact through Warden. Porter returns success only after
    Stargate succeeds, copying an explicit allowlist of authorization headers.
@@ -108,15 +128,19 @@ Enable `HEADER_AUTH_ENABLED=true`, set `HEADER_AUTH_SHARED_SECRET`, and configur
 Warden on Stargate. Porter uses Stargate's default secret header
 `X-Stargate-Header-Auth`. No browser cookie, password or arbitrary client identity
 header is forwarded to Stargate, preventing fallback to an unrelated login path.
-The example requires both optional Stargate settings; without them `/auth` proves
-only the mapped external identity and must not be used as a business access gate.
+The example requires both Stargate settings. Without them `/auth` fails closed
+with 503; `/identity` is the separate identity-only interface.
 
 Keep Porter, Stargate and Warden backends off the public network. Use HTTPS for
-`stargate_url` across untrusted networks; HTTP is accepted for private deployments.
+`stargate_url` across untrusted networks. Non-loopback HTTP is rejected unless
+`allow_insecure_stargate: true` explicitly permits a private plaintext connection.
+The container-network example opts in; remove that opt-in when using HTTPS.
 The example assumes Stargate's default `USER_HEADER_NAME`. Porter forwards only
 `X-Forwarded-User`, `X-Auth-User`, `X-Auth-Email`, `X-Auth-Phone`, `X-Auth-Name`,
 `X-Auth-Role` and `X-Auth-Scopes`. `Set-Cookie`, redirects and shared secrets are
-never returned. Custom identity header names require an explicit code change.
+never returned. The two identity headers must identify the bound user, not the
+generic value `authenticated`. Custom identity header names require an explicit
+code change.
 Stargate/Herald step-up flows are not orchestrated by this initial implementation;
 external login must not be treated as verified email evidence or MFA.
 
@@ -156,8 +180,32 @@ go build ./cmd/porter
 
 Tests cover local provider responses, cryptographically signed Google tokens,
 transaction binding and single consumption, session persistence/expiry/revocation,
-configuration rejection, and closed storage failures. Real provider credentials,
+configuration rejection, logout/exchange races, mapping reconciliation, original
+request forwarding, identity mismatches and closed storage failures.
+
+Chromium acceptance submits the real HTML forms, intercepts only provider
+authorization navigation, and checks callbacks, secure cookies and logout:
+
+```sh
+PORTER_CHROME=/path/to/google-chrome go test ./internal/gateway -run TestBrowserForms -count=1 -v
+```
+
+This test requires Node.js 22 or later and an isolated Chrome/Chromium binary;
+it is enabled explicitly in Linux CI. Provider exchange fixtures are separate
+from browser navigation fixtures. Real provider credentials,
 application approval and callbacks are still required for live acceptance.
+
+The Nginx integration test runs the actual configuration and Porter handler over
+local TLS, with simulated Stargate and business upstreams. It checks forged
+headers, original POST routing, contact reassignment and dependency failure:
+
+```sh
+docker build -f tests/nginx.Dockerfile -t porter-nginx-check .
+docker run --rm porter-nginx-check
+```
+
+Both browser and Nginx acceptance tests run in CI. Neither test establishes a
+live provider authorization or a deployment against a real Warden directory.
 
 ## Protocol references
 

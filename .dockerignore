@@ -5,3 +5,5 @@
 !cmd/**
 !internal/
 !internal/**
+!examples/
+!examples/nginx.conf

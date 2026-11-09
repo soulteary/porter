@@ -46,13 +46,14 @@ func (g *Gateway) Handler() http.Handler {
 	m.HandleFunc("GET /callback/{provider}", g.callback)
 	m.HandleFunc("POST /logout", g.logout)
 	m.HandleFunc("GET /auth", g.auth)
+	m.HandleFunc("GET /identity", g.identity)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-		if r.URL.Path != "/auth" && r.URL.Path != "/healthz" && !strings.EqualFold(r.Host, g.origin.Host) {
+		if r.URL.Path != "/auth" && r.URL.Path != "/identity" && r.URL.Path != "/healthz" && !strings.EqualFold(r.Host, g.origin.Host) {
 			http.Error(w, "invalid host", http.StatusBadRequest)
 			return
 		}
@@ -63,6 +64,7 @@ func (g *Gateway) Handler() http.Handler {
 var page = template.Must(template.New("login").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Porter</title><h1>Sign in</h1>{{range .}}<form method="post" action="/login/{{.}}"><button type="submit">Continue with {{.}}</button></form>{{end}}<form method="post" action="/logout"><button type="submit">Sign out</button></form></html>`))
 
 func (g *Gateway) login(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Referrer-Policy", "same-origin")
 	names := make([]string, 0, len(g.providers))
 	for k := range g.providers {
 		names = append(names, k)
@@ -167,13 +169,19 @@ func (g *Gateway) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiry := time.Now().Add(5 * time.Minute)
-	if e = g.db.Put("transactions", state, store.Record{Expires: expiry, Provider: r.PathValue("provider"), Browser: store.Key(browser), Verifier: verifier, Nonce: nonce}); e != nil {
+	if e = g.db.Start(state, browser, g.readCookie(r, "transaction"), store.Record{Expires: expiry, Provider: r.PathValue("provider"), Namespace: g.cfg.Providers[r.PathValue("provider")].ClientID, Verifier: verifier, Nonce: nonce}); e != nil {
 		unavailable(w)
 		return
 	}
 	g.cookie(w, "transaction", browser, expiry, 300)
-	http.Redirect(w, r, p.AuthorizationURL(state, verifier, nonce), http.StatusSeeOther)
+	// End the form submission on this origin. Meta navigation is a separate GET,
+	// so strict form-action does not block the provider's redirect chain.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = navigation.Execute(w, p.AuthorizationURL(state, verifier, nonce))
 }
+
+var navigation = template.Must(template.New("navigate").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={{.}}"><title>Continue signing in</title><a href="{{.}}">Continue to identity provider</a></html>`))
+
 func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("provider")
 	p, ok := g.providers[name]
@@ -201,6 +209,10 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.cookie(w, "transaction", "", time.Unix(1, 0), -1)
+	if tx.Namespace != g.cfg.Providers[name].ClientID {
+		http.Error(w, "login configuration changed", http.StatusBadRequest)
+		return
+	}
 	if q.Get("error") != "" || q.Get("code") == "" || len(q.Get("code")) > 4096 {
 		http.Error(w, "authorization was not completed", http.StatusBadRequest)
 		return
@@ -214,7 +226,8 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid provider identity", http.StatusBadGateway)
 		return
 	}
-	if _, ok = g.cfg.Resolve(id.Provider, id.Namespace, id.Subject); !ok {
+	binding, linked := g.cfg.Resolve(id.Provider, id.Namespace, id.Subject)
+	if !linked {
 		http.Error(w, "identity is not linked; contact the administrator", http.StatusForbidden)
 		return
 	}
@@ -224,21 +237,21 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiry := time.Now().Add(time.Duration(g.cfg.SessionSeconds) * time.Second)
-	if e = g.db.Put("sessions", token, store.Record{Expires: expiry, Provider: id.Provider, Namespace: id.Namespace, Subject: id.Subject}); e != nil {
-		unavailable(w)
+	if e = g.db.RotateSession(token, g.readCookie(r, "session"), store.Record{Expires: expiry, Provider: id.Provider, Namespace: id.Namespace, Subject: id.Subject, Browser: tx.Browser, UserID: binding.UserID, Binding: binding.Revision()}); e != nil {
+		if errors.Is(e, store.ErrMissing) {
+			http.Error(w, "login was revoked", http.StatusBadRequest)
+		} else {
+			unavailable(w)
+		}
 		return
 	}
-	if old := g.readCookie(r, "session"); old != "" {
-		if e = g.db.Delete("sessions", old); e != nil {
-			_ = g.db.Delete("sessions", token)
-			unavailable(w)
-			return
-		}
-	}
+
 	g.cookie(w, "session", token, expiry, g.cfg.SessionSeconds)
 	http.Redirect(w, r, g.cfg.LandingURL, http.StatusSeeOther)
 }
-func (g *Gateway) auth(w http.ResponseWriter, r *http.Request) {
+func (g *Gateway) auth(w http.ResponseWriter, r *http.Request)     { g.check(w, r, false) }
+func (g *Gateway) identity(w http.ResponseWriter, r *http.Request) { g.check(w, r, true) }
+func (g *Gateway) check(w http.ResponseWriter, r *http.Request, identityOnly bool) {
 	// This endpoint is for a proxy subrequest, not for browser navigation.
 	provided := r.Header.Get("Authorization")
 	if subtle.ConstantTimeCompare([]byte(provided), []byte("Bearer "+g.cfg.ProxyKey)) != 1 {
@@ -250,7 +263,7 @@ func (g *Gateway) auth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login required", http.StatusUnauthorized)
 		return
 	}
-	s, e := g.db.Get("sessions", token)
+	s, e := g.db.Session(token)
 	if e != nil {
 		if errors.Is(e, store.ErrMissing) {
 			http.Error(w, "login required", http.StatusUnauthorized)
@@ -260,12 +273,16 @@ func (g *Gateway) auth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, ok := g.cfg.Resolve(s.Provider, s.Namespace, s.Subject)
-	if !ok {
+	if !ok || s.UserID != b.UserID || s.Binding != b.Revision() {
 		http.Error(w, "identity is not linked", http.StatusForbidden)
 		return
 	}
-	if g.cfg.StargateURL != "" {
-		g.authorize(w, r, b)
+	if !identityOnly {
+		if g.cfg.StargateURL == "" {
+			http.Error(w, "authorization is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		g.authorize(w, r, b, token)
 		return
 	}
 	// These are claims for the next trusted hop, not a Warden authorization decision.
@@ -284,12 +301,12 @@ func (g *Gateway) logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid origin", http.StatusForbidden)
 		return
 	}
-	if token := g.readCookie(r, "session"); token != "" {
-		if e := g.db.Delete("sessions", token); e != nil {
-			unavailable(w)
-			return
-		}
+	if e := g.db.Revoke(g.readCookie(r, "session"), g.readCookie(r, "transaction")); e != nil {
+		unavailable(w)
+		return
 	}
+	g.cookie(w, "transaction", "", time.Unix(1, 0), -1)
+
 	g.cookie(w, "session", "", time.Unix(1, 0), -1)
 	http.Redirect(w, r, g.cfg.PublicURL+"/login", http.StatusSeeOther)
 }
@@ -299,12 +316,22 @@ func unavailable(w http.ResponseWriter) {
 
 // authorize delegates the access decision over a fixed server-to-server endpoint.
 // No browser cookie, password or client identity header enters this request.
-func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request, b config.Binding) {
+func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request, b config.Binding, token string) {
 	req, e := http.NewRequestWithContext(r.Context(), http.MethodGet, g.cfg.StargateURL, nil)
 	if e != nil {
 		unavailable(w)
 		return
 	}
+	uri, method := r.Header.Get("X-Forwarded-Uri"), r.Header.Get("X-Forwarded-Method")
+	target, err := url.ParseRequestURI(uri)
+	if err != nil || !strings.HasPrefix(uri, "/") || strings.HasPrefix(uri, "//") || target.IsAbs() || len(uri) > 8192 || !validMethod(method) || r.Header.Get("X-Forwarded-Host") != g.origin.Host || r.Header.Get("X-Forwarded-Proto") != g.origin.Scheme {
+		http.Error(w, "invalid authorization context", http.StatusServiceUnavailable)
+		return
+	}
+	req.Header.Set("X-Forwarded-Uri", uri)
+	req.Header.Set("X-Forwarded-Method", method)
+	req.Header.Set("X-Forwarded-Host", g.origin.Host)
+	req.Header.Set("X-Forwarded-Proto", g.origin.Scheme)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Stargate-Header-Auth", g.cfg.StargateSecret)
 	if b.Mail != "" {
@@ -321,8 +348,31 @@ func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request, b config.Bin
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
+		// Contact reassignment must never turn an external login into another user.
+		for _, key := range []string{"X-Auth-User", "X-Forwarded-User"} {
+			values := resp.Header.Values(key)
+			if len(values) != 1 || values[0] != b.UserID {
+				http.Error(w, "authorization identity mismatch", http.StatusForbidden)
+				return
+			}
+		}
+		for _, key := range authorizationHeaders {
+			if len(resp.Header.Values(key)) > 1 {
+				http.Error(w, "ambiguous authorization headers", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		// A logout or expiry during a slow directory call still prevents access.
+		if current, e := g.db.Session(token); e != nil || current.UserID != b.UserID || current.Binding != b.Revision() {
+			if e != nil && !errors.Is(e, store.ErrMissing) {
+				unavailable(w)
+			} else {
+				http.Error(w, "login required", http.StatusUnauthorized)
+			}
+			return
+		}
 		// Default Stargate output headers only; never forward Set-Cookie or secrets.
-		for _, key := range []string{"X-Forwarded-User", "X-Auth-User", "X-Auth-Email", "X-Auth-Phone", "X-Auth-Name", "X-Auth-Role", "X-Auth-Scopes"} {
+		for _, key := range authorizationHeaders {
 			if value := resp.Header.Get(key); value != "" {
 				w.Header().Set(key, value)
 			}
@@ -333,4 +383,18 @@ func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request, b config.Bin
 	default:
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 	}
+}
+
+var authorizationHeaders = []string{"X-Forwarded-User", "X-Auth-User", "X-Auth-Email", "X-Auth-Phone", "X-Auth-Name", "X-Auth-Role", "X-Auth-Scopes"}
+
+func validMethod(method string) bool {
+	if method == "" || len(method) > 32 {
+		return false
+	}
+	for _, c := range method {
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
 }
