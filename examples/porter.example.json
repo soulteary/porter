@@ -1,0 +1,30 @@
+{
+  "listen": ":8083",
+  "public_url": "https://login.example.com",
+  "landing_url": "https://login.example.com/",
+  "database": "/data/porter.db",
+  "proxy_key": "REPLACE_WITH_A_RANDOM_SECRET_OF_AT_LEAST_32_CHARACTERS",
+  "development": false,
+  "session_seconds": 28800,
+  "providers": {
+    "github": {
+      "client_id": "GITHUB_CLIENT_ID",
+      "client_secret": "GITHUB_CLIENT_SECRET"
+    },
+    "google": {
+      "client_id": "GOOGLE_CLIENT_ID",
+      "client_secret": "GOOGLE_CLIENT_SECRET"
+    },
+    "wechat": {
+      "client_id": "WECHAT_APP_ID",
+      "client_secret": "WECHAT_APP_SECRET"
+    },
+    "qq": {
+      "client_id": "QQ_APP_ID",
+      "client_secret": "QQ_APP_SECRET"
+    }
+  },
+  "bindings": [],
+  "stargate_url": "http://stargate:8080/_auth",
+  "stargate_secret": "REPLACE_WITH_STARGATE_SHARED_SECRET"
+}

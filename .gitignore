@@ -1,0 +1,5 @@
+/porter
+/porter.json
+*.db
+*.db.*
+coverage.out
