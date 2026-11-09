@@ -18,12 +18,14 @@ import (
 
 	"github.com/soulteary/porter/internal/config"
 	"github.com/soulteary/porter/internal/observe"
+	"github.com/soulteary/porter/internal/outbound"
 	"github.com/soulteary/porter/internal/provider"
 	"github.com/soulteary/porter/internal/store"
 )
 
 type Gateway struct {
 	observer  observe.Observer
+	client    *http.Client
 	cfg       config.Config
 	db        *store.Store
 	providers map[string]provider.Adapter
@@ -38,12 +40,13 @@ type window struct {
 
 func New(c config.Config, s *store.Store, p map[string]provider.Adapter, observers ...observe.Observer) *Gateway {
 	u, _ := url.Parse(c.PublicURL)
-	g := &Gateway{cfg: c, db: s, providers: p, origin: u, limits: map[string]window{}}
+	g := &Gateway{cfg: c, db: s, providers: p, origin: u, limits: map[string]window{}, client: outbound.New(10 * time.Second)}
 	if len(observers) > 0 {
 		g.observer = observers[0]
 	}
 	return g
 }
+func (g *Gateway) CloseIdleConnections() { g.client.CloseIdleConnections() }
 func (g *Gateway) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -359,8 +362,7 @@ func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request, b config.Bin
 	} else {
 		req.Header.Set("X-User-Phone", b.Phone)
 	}
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, e := client.Do(req)
+	resp, e := g.client.Do(req)
 	if e != nil {
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 		return

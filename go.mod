@@ -8,6 +8,7 @@ require (
 	github.com/prometheus/client_golang v1.25.0
 	github.com/soulteary/audit-kit/v2 v2.1.4
 	github.com/soulteary/health-kit/v4 v4.0.5
+	github.com/soulteary/http-kit/v2 v2.1.0
 	github.com/soulteary/logger-kit/v3 v3.0.4
 	github.com/soulteary/metrics-kit/v3 v3.0.4
 	github.com/soulteary/preflight-kit v1.0.2
