@@ -46,7 +46,7 @@ func TestBrowserForms(t *testing.T) {
 		c.Bindings = append(c.Bindings, config.Binding{Provider: name, Namespace: "app-" + name, Subject: "subject", UserID: "internal-1", Mail: "owner@example.test"})
 		adapters[name] = browserAdapter{name: name}
 	}
-	g := New(c, db, adapters)
+	g := New(c, db, adapters, discardObserver{})
 	h := g.Handler()
 	s.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/app" {

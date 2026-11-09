@@ -3,3 +3,7 @@
 *.db
 *.db.*
 coverage.out
+
+/porter-audit.jsonl
+/porter-audit.jsonl.*
+/data/

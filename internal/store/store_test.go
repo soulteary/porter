@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -168,5 +169,32 @@ func TestSessionPersistenceAndFamilyExpiry(t *testing.T) {
 	}
 	if _, e = s.Session("session"); !errors.Is(e, ErrMissing) {
 		t.Fatal("expired family authorized", e)
+	}
+}
+
+func TestReadinessDoesNotConsumeOrRotateRecords(t *testing.T) {
+	s, e := Open(filepath.Join(t.TempDir(), "state.db"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	expiry := time.Now().Add(time.Hour)
+	if e = s.Start("state", "browser", "", Record{Expires: expiry, Provider: "github"}); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.RotateSession("session", "", Record{Expires: expiry, UserID: "u1", Binding: "revision", Browser: Key("browser")}); e != nil {
+		t.Fatal(e)
+	}
+	for range 3 {
+		if e = s.Check(context.Background()); e != nil {
+			t.Fatal(e)
+		}
+	}
+	r, e := s.Session("session")
+	if e != nil || !r.Expires.Equal(expiry) {
+		t.Fatal("probe changed session", e)
+	}
+	if _, e = s.Consume("state", "browser", "github"); e != nil {
+		t.Fatal("probe consumed transaction", e)
 	}
 }

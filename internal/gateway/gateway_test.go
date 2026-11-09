@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/soulteary/porter/internal/config"
+	"github.com/soulteary/porter/internal/observe"
 	"github.com/soulteary/porter/internal/provider"
 	"github.com/soulteary/porter/internal/store"
 )
@@ -35,7 +36,7 @@ func fixture(t *testing.T) (*Gateway, *fake) {
 	t.Cleanup(func() { s.Close() })
 	f := &fake{}
 	c := config.Config{PublicURL: "https://porter.test", LandingURL: "https://porter.test/app", SessionSeconds: 3600, ProxyKey: strings.Repeat("k", 32), Providers: map[string]config.Provider{"github": {ClientID: "app", ClientSecret: "secret"}}, Bindings: []config.Binding{{Provider: "github", Namespace: "app", Subject: "123", UserID: "internal-1", Mail: "owner@example.test"}}}
-	return New(c, s, map[string]provider.Adapter{"github": f}), f
+	return New(c, s, map[string]provider.Adapter{"github": f}, discardObserver{}), f
 }
 func request(g *Gateway, method, path string, cookie *http.Cookie, origin, authorization string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, "https://porter.test"+path, nil)
@@ -372,3 +373,7 @@ func TestCallbackRejectsChangedClientNamespace(t *testing.T) {
 		t.Fatal("exchanged a code after client namespace changed", w.Code, f.calls)
 	}
 }
+
+type discardObserver struct{}
+
+func (discardObserver) Observe(context.Context, observe.Event) {}
