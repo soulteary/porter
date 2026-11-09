@@ -292,6 +292,11 @@ Configuration still loads once at startup. Rollback requires removing the new
 `operations` configuration section before using a previous strict config parser;
 retain the database and audit journal.
 
+Production deployment, persistent-volume ownership, immutable image upgrades,
+rollback without session resurrection, and the pinned-baseline container
+acceptance suite are documented in [deployment.md](docs/deployment.md).
+A single-replica Compose example is available in [examples/compose.yml](examples/compose.yml).
+
 ## Validation
 
 ```sh
@@ -343,8 +348,3 @@ live provider authorization or a deployment against a real Warden directory.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
-
-Production deployment, persistent-volume ownership, immutable image upgrades,
-rollback without session resurrection, and the pinned-baseline container
-acceptance suite are documented in [deployment.md](docs/deployment.md).
-A single-replica Compose example is available in [examples/compose.yml](examples/compose.yml).
