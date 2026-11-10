@@ -1,0 +1,35 @@
+name: Protocol and session fuzz
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 3 * * 1'
+permissions:
+  contents: read
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      FUZZ_TIME: ${{ github.event_name == 'schedule' && '2m' || '20s' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Provider response and one-use exchange fuzzing
+        run: go test ./internal/provider -run '^$' -fuzz '^FuzzProviderResponseSingleExchange$' -fuzztime "$FUZZ_TIME" -parallel 2
+      - name: Callback transaction fuzzing
+        run: go test ./internal/gateway -run '^$' -fuzz '^FuzzCallbackSingleUse$' -fuzztime "$FUZZ_TIME" -parallel 2
+      - name: Persistent session state fuzzing
+        run: go test ./internal/store -run '^$' -fuzz '^FuzzSessionRevocationAcrossRestart$' -fuzztime "$FUZZ_TIME" -parallel 2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: synthetic-fuzz-reproducers
+          path: internal/**/testdata/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14
