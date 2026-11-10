@@ -32,7 +32,8 @@ Acceptance covers:
   Credential mismatch causes scrape/readiness alerts; the exporter remains up.
 - Coordinated stop/start loading the new key, rejecting the old one, restoring
   actual scrapes and resolving the alerts in the same running Prometheus instance.
-  A rule evaluation after recovered scrapes is required; rebuilding monitoring
+  A healthy rule evaluation after recovered scrapes is required, measured against
+  the previous Prometheus evaluation rather than the host wall clock; rebuilding monitoring
   cannot substitute for alert resolution. An existing session survives; logout
   still revokes it. Identity-only `/auth` remains fail-closed.
 - An exporter outage causing its own alert, followed by exporter recovery.
@@ -61,3 +62,6 @@ Validate these settings in the trusted deployment environment. Do not infer that
 readiness proves platform credentials, identity binding correctness or Stargate
 authorization. Follow `secret-files.md` for coordinated key changes and
 `deployment.md` for compatible rollback against the current database.
+
+Run `python3 -m unittest discover -s tests/operations -v` for the evaluation
+parser, missing/error rule rejection and nanosecond timestamp compatibility.

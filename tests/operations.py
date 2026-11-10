@@ -13,6 +13,29 @@ import uuid
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def rule_evaluation_time(payload):
+    """Only a healthy evaluation of the real Porter rules advances the gate."""
+    if payload.get('status') != 'success':
+        return None
+    for group in payload.get('data', {}).get('groups', []):
+        if group.get('name') != 'porter':
+            continue
+        rules = group.get('rules', [])
+        if not {'PorterScrapeUnavailable', 'PorterReadinessFailed'}.issubset({rule.get('name') for rule in rules}):
+            return None
+        if any(rule.get('health') != 'ok' or rule.get('lastError') for rule in rules):
+            return None
+        try:
+            raw = re.sub(r'(\.\d{6})\d+', r'\1', group['lastEvaluation']).replace('Z', '+00:00')
+            evaluated = datetime.datetime.fromisoformat(raw)
+            if evaluated.utcoffset() is None:
+                return None
+            return evaluated.timestamp()
+        except (KeyError, ValueError, OverflowError):
+            return None
+    return None
+
+
 def main():
     suffix = uuid.uuid4().hex[:12]
     prefix = 'porter-ops-' + suffix
@@ -62,14 +85,15 @@ def main():
         results = query('ALERTS{alertname="' + name + '",alertstate="firing"}')
         return results is not None and bool(results) == expected
 
-    def evaluated_after(timestamp):
+    def evaluation_time():
         result = request('http://' + prometheus_ip + ':9090/api/v1/rules?type=alert')
         if result['status'] != 200:
-            return False
-        groups = json.loads(result['body'])['data']['groups']
-        return any(group['name'] == 'porter' and
-                   datetime.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', group['lastEvaluation']).replace('Z', '+00:00')).timestamp() > timestamp
-                   for group in groups)
+            return None
+        return rule_evaluation_time(json.loads(result['body']))
+
+    def evaluated_after(timestamp):
+        current = evaluation_time()
+        return current is not None and current > timestamp
 
     def sidecars():
         for name, image, address, args in [
@@ -152,7 +176,10 @@ def main():
         for name, started in monitoring_started.items():
             assert docker('inspect', '--format', '{{.State.StartedAt}}', name) == started, 'monitoring restarted instead of resolving alerts'
         wait(lambda: value('up{job="porter"}', 1) and value('probe_success{job="porter-readiness"}', 1), 'scrapes did not recover')
-        recovered_at = time.time()
+        # Compare evaluations from Prometheus itself: host/VM wall clocks may
+        # differ, and an unhealthy rule evaluation must not count as recovery.
+        recovered_at = evaluation_time()
+        assert recovered_at is not None, 'recovered rules were not healthy'
         wait(lambda: evaluated_after(recovered_at) and alert('PorterScrapeUnavailable', False) and alert('PorterReadinessFailed', False), 'original alerts did not resolve after a fresh rule evaluation')
         assert request('http://' + app_ip + ':8083/identity', 'proxy', network=appnet)['status'] == 200
         assert request('http://' + app_ip + ':8083/auth', 'proxy', network=appnet)['status'] == 503, 'identity-only auth did not fail closed'
