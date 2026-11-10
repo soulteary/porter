@@ -15,7 +15,7 @@ IMAGE, REPOSITORY = 'ghcr.io/soulteary/porter', 'soulteary/porter'
 
 
 class ReleaseGate(unittest.TestCase):
-    def exercise(self, fail=None, platforms=('amd64', 'arm64'), promote=True):
+    def exercise(self, fail=None, platforms=('amd64', 'arm64'), promote=True, tamper_promotion=False):
         manifest = json.dumps({'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json',
                                'manifests': [{'platform': {'os': 'linux', 'architecture': arch}} for arch in platforms]}).encode()
         digest = 'sha256:' + hashlib.sha256(manifest).hexdigest()
@@ -27,7 +27,7 @@ class ReleaseGate(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, argv)
             return subprocess.CompletedProcess(argv, 0)
 
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(gate.subprocess, 'run', side_effect=run), mock.patch.object(gate.subprocess, 'check_output', return_value=manifest) as inspect:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(gate.subprocess, 'run', side_effect=run), mock.patch.object(gate.subprocess, 'check_output', side_effect=lambda command: b'{}' if tamper_promotion and command[-1] == IMAGE + ':v0.2.0' else manifest) as inspect:
             try:
                 gate.release(IMAGE, digest, REPOSITORY, 'v0.2.0', pathlib.Path(directory), promote)
             except (ValueError, subprocess.CalledProcessError) as error:
@@ -63,6 +63,11 @@ class ReleaseGate(unittest.TestCase):
         calls, error, _, _ = self.exercise(platforms=('amd64',))
         self.assertIsInstance(error, ValueError)
         self.assertFalse(calls)
+
+    def test_changed_promoted_manifest_fails_final_verification(self):
+        calls, error, _, _ = self.exercise(tamper_promotion=True)
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(calls[-1][0:4], ['docker', 'buildx', 'imagetools', 'create'])
 
     def test_check_mode_cannot_publish(self):
         calls, error, _, _ = self.exercise(promote=False)

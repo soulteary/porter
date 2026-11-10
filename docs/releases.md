@@ -51,8 +51,9 @@ must still match the checked digest. Reports identify their immutable subject
 and are retained for 14 days.
 
 The native PR builds remain useful preflight checks; they are not a substitute
-for the exact candidate gate. Scanner, registry or attestation errors prevent
-version promotion. A failed attempt can leave an unpromoted candidate and origin
+for the exact candidate gate. Scanner or provenance failures before promotion prevent version assignment.
+Registry errors fail the job; a late error during promotion or its final digest
+check may leave a version tag present without a successful release. A failed attempt can leave an unpromoted candidate and origin
 attestation in GHCR; neither means the vulnerability gate passed. No `latest` tag
 or automatic deployment is produced. Only a completed successful release summary
 is a deployment reference. The environment-policy job has only Actions read
