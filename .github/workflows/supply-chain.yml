@@ -29,6 +29,9 @@ jobs:
       - name: Validate workflows
         if: matrix.arch == 'amd64'
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Validate release failure gates
+        if: matrix.arch == 'amd64'
+        run: python3 -m unittest discover -s tests/release -v
       - name: Build and start native production image
         env:
           ARCH: ${{ matrix.arch }}

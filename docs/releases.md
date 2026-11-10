@@ -38,15 +38,31 @@ workflow's version pattern. Only the publishing job gets package-write,
 attestation-write and OIDC permissions. No cloud or production credentials are
 required. Tags and workflow dispatch are not created by the PR checks.
 
-The publishing job builds amd64/arm64 with pinned inputs, embeds version, commit
-and source commit time, pushes a version tag with BuildKit SBOM/provenance, then
-creates a GitHub OIDC provenance attestation bound to the multi-platform digest.
-It verifies that attestation before reporting the immutable image reference.
-A failure after pushing may leave an image present without a successful release;
-use only a digest with completed verification, not a tag's mere existence. No
-`latest` tag or automatic deployment is produced. PR image checks build the same
-source and release metadata but are separate builds; they do not assert bitwise
-identity to the subsequently published BuildKit image.
+The publishing job builds amd64/arm64 with pinned inputs and an explicit Buildx
+version, embeds version, commit and source commit time, and pushes only a
+`candidate-<run-id>-<attempt>` tag with BuildKit SBOM/provenance. A GitHub OIDC
+provenance attestation is bound to that candidate's multi-platform digest.
+`tools/release-image.py` then checks the raw index digest and both required Linux
+platforms, generates platform-specific CycloneDX SBOMs and full vulnerability
+reports from **that exact registry digest**, and blocks fixable HIGH/CRITICAL
+findings on either platform. It verifies the provenance before assigning the
+version tag by a manifest carbon copy, without rebuilding. The promoted manifest
+must still match the checked digest. Reports identify their immutable subject
+and are retained for 14 days.
+
+The native PR builds remain useful preflight checks; they are not a substitute
+for the exact candidate gate. Scanner, registry or attestation errors prevent
+version promotion. A failed attempt can leave an unpromoted candidate and origin
+attestation in GHCR; neither means the vulnerability gate passed. No `latest` tag
+or automatic deployment is produced. Only a completed successful release summary
+is a deployment reference. The environment-policy job has only Actions read
+permission for the environment API; publishing write/OIDC grants remain isolated.
+
+`python3 -m unittest discover -s tests/release -v` checks the actual promotion
+helper's failure paths with mocked external commands: either platform failing,
+scanner errors, missing platforms, wrong digest and provenance rejection must
+not assign a version tag. Check mode cannot publish. These tests run in PR CI;
+real package writes and OIDC issuance are reserved for a protected tag release.
 
 ## Verify before deployment
 

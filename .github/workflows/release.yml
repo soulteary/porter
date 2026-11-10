@@ -9,6 +9,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   release-policy:
+    permissions:
+      actions: read
     runs-on: ubuntu-24.04
     steps:
       - name: Require protected release environment
@@ -55,6 +57,7 @@ jobs:
           image: tonistiigi/binfmt:latest@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
+          version: v0.38.2
           driver-opts: image=moby/buildkit:buildx-stable-1@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -67,7 +70,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE }}:${{ github.ref_name }}
+          tags: ${{ env.IMAGE }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
           provenance: mode=max
           sbom: generator=docker/buildkit-syft-scanner:stable-1@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315
           build-args: |
@@ -79,12 +82,23 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-      - name: Verify published provenance and report immutable reference
+      - uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.76.2
+          cache: false
+      - name: Check exact candidate and promote verified digest
         env:
           GH_TOKEN: ${{ github.token }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          python3 tools/release-image.py --image "$IMAGE" --digest "$DIGEST" --repository "$GITHUB_REPOSITORY" --version "$GITHUB_REF_NAME" --promote
           # shellcheck disable=SC2016
           printf 'Published `%s@%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: release-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-reports/
+          retention-days: 14
+          if-no-files-found: warn
