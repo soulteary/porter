@@ -1,0 +1,46 @@
+{
+  "passed": true,
+  "checks": [
+    "bounded_identity_reads",
+    "snapshot_revoked_after_backup_not_revived",
+    "all_restored_sessions_invalid",
+    "restored_callback_denied",
+    "fresh_session_logout_persists"
+  ],
+  "system": "Linux",
+  "architecture": "aarch64",
+  "docker_server_version": "29.2.1",
+  "candidate_image_id": "sha256:7022a1db6b4c62977929dac8a127518582e28b2cadd799d1e5989f8d4773b124",
+  "limits": {
+    "cpus": 0.5,
+    "memory_mib": 256,
+    "pids": 128
+  },
+  "latency": {
+    "requests": 200,
+    "offered_qps": 10,
+    "duration_seconds": 19.925,
+    "p50_ms": 25.133,
+    "p95_ms": 35.979,
+    "p99_ms": 39.337
+  },
+  "timings": {
+    "initial_ready_seconds": 0.385,
+    "backup_seconds": 0.342,
+    "restore_seconds": 0.314,
+    "restored_ready_seconds": 0.371
+  },
+  "synthetic_only": true,
+  "live_provider_login": false,
+  "rpo_claimed": false,
+  "incident_rto_claimed": false,
+  "acceptance_date": "2026-11-10",
+  "production_source_commit": "3817907fce6a2cb5d55b594f2f9a0f30d81e85cc",
+  "harness_commit": "9b68e41303ad918e65aa4c7e06d997a707e5732c",
+  "existing_application_container_ids_and_health_unchanged": true,
+  "host_class": {
+    "logical_cpus": 4,
+    "memory_gib_approx": 15,
+    "shared_host": true
+  }
+}

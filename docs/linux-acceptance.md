@@ -40,3 +40,12 @@ sanitized JSON for 14 days; retain operator evidence under the site's own policy
 
 Live provider authorization, browser redirect/QR behavior, complete incident
 response timing and production workload capacity are outside this synthetic drill.
+
+## Recorded target-host run
+
+The [2026-11-10 ARM64 evidence](evidence/linux-arm64-2026-11-10.json) records
+200 successful reads at 10 offered QPS: p50 25.133 ms, p95 35.979 ms and
+p99 39.337 ms. Backup and restore commands took 0.342 s and 0.314 s;
+restored readiness took 0.371 s. The existing application containers retained
+their IDs and health across the drill. These are single-run observations on a
+shared host under the stated container limits, not service-level objectives.
