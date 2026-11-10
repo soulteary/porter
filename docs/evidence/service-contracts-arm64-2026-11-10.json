@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "checks": [
+    "bound_identity_and_role",
+    "forged_headers_and_direct_upstream_denied",
+    "contact_reassignment_denied",
+    "inactive_directory_identity_denied",
+    "upstream_outage_fails_closed_and_recovers",
+    "logout_survives_restart"
+  ],
+  "upstream_images": {
+    "stargate": "ghcr.io/soulteary/stargate:1.3.6@sha256:51a5f7b854509f7f6a284ec3ffed9c4f8c787967e84679018fa8a6437819a0a4",
+    "warden": "ghcr.io/soulteary/warden:1.6.3@sha256:9ac7db4184d922ddaadfa99f9e65a59e88641f08181f6eab83a57c19a9e3234c"
+  },
+  "candidate_image_id": "sha256:7022a1db6b4c62977929dac8a127518582e28b2cadd799d1e5989f8d4773b124",
+  "synthetic_only": true,
+  "live_provider_login": false,
+  "limits": {
+    "cpus_per_service": 0.5,
+    "memory_mib_per_service": 256,
+    "pids_per_service": 128
+  },
+  "acceptance_date": "2026-11-10",
+  "system": "Linux",
+  "architecture": "aarch64",
+  "production_source_commit": "3817907fce6a2cb5d55b594f2f9a0f30d81e85cc",
+  "existing_application_container_ids_and_health_unchanged": true
+}

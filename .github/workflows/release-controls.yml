@@ -1,0 +1,20 @@
+name: Release controls
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests/release_controls -v
+      - name: Verify public release policy with the read-only workflow token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release-controls.py --check-public --expected-repository "$GITHUB_REPOSITORY"
