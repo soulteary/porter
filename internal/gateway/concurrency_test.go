@@ -110,3 +110,107 @@ func TestLogoutDuringExchangeSurvivesRestart(t *testing.T) {
 		})
 	}
 }
+
+// All callbacks start together. Exactly one may consume the transaction, exchange
+// the code and issue a session; the winner must remain usable after reopening.
+func TestConcurrentCallbacksHaveSinglePersistentWinner(t *testing.T) {
+	for _, name := range []string{"github", "google", "wechat", "qq"} {
+		t.Run(name, func(t *testing.T) {
+			g, _ := fixture(t)
+			defer g.CloseIdleConnections()
+			path := filepath.Join(t.TempDir(), "winner.db")
+			db, err := store.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if db != nil {
+					db.Close()
+				}
+			})
+			g.db = db
+			g.cfg.Providers = map[string]config.Provider{name: {ClientID: "app", ClientSecret: "SECRET"}}
+			g.cfg.Bindings[0].Provider = name
+			p := &blockedExchange{name: name, entered: make(chan struct{}), release: make(chan struct{})}
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(p.release) }) }
+			defer unblock()
+			g.providers = map[string]provider.Adapter{name: p}
+			state, browser := strings.Repeat("S", 43), strings.Repeat("B", 43)
+			if err := db.Start(state, browser, "", store.Record{Provider: name, Namespace: "app", Expires: time.Now().Add(time.Minute)}); err != nil {
+				t.Fatal(err)
+			}
+			cookie := &http.Cookie{Name: g.cookieName("transaction"), Value: browser}
+			const count = 16
+			barrier := make(chan struct{})
+			responses := make(chan *httptest.ResponseRecorder, count)
+			var ready sync.WaitGroup
+			ready.Add(count)
+			for i := 0; i < count; i++ {
+				go func() {
+					ready.Done()
+					<-barrier
+					responses <- request(g, "GET", "/callback/"+name+"?state="+state+"&code=SECRET", cookie, "", "")
+				}()
+			}
+			ready.Wait()
+			close(barrier)
+			select {
+			case <-p.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("no exchange winner")
+			}
+			for i := 0; i < count-1; i++ {
+				select {
+				case response := <-responses:
+					if response.Code != http.StatusBadRequest {
+						t.Fatal("losing callback was not rejected", response.Code)
+					}
+					for _, c := range response.Result().Cookies() {
+						if c.Name == g.cookieName("session") && c.Value != "" {
+							t.Fatal("loser issued a session")
+						}
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("losing callback did not finish")
+				}
+			}
+			unblock()
+			var winner *httptest.ResponseRecorder
+			select {
+			case winner = <-responses:
+			case <-time.After(5 * time.Second):
+				t.Fatal("winner did not finish")
+			}
+			if winner.Code != http.StatusSeeOther || p.calls.Load() != 1 {
+				t.Fatal("not exactly one successful exchange", winner.Code, p.calls.Load())
+			}
+			var session *http.Cookie
+			for _, c := range winner.Result().Cookies() {
+				if c.Name == g.cookieName("session") && c.Value != "" {
+					if session != nil {
+						t.Fatal("multiple session cookies")
+					}
+					session = c
+				}
+			}
+			if session == nil {
+				t.Fatal("winner did not issue a session")
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err = store.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g.db = db
+			if result := request(g, "GET", "/identity", session, "", "Bearer "+g.cfg.ProxyKey); result.Code != http.StatusOK {
+				t.Fatal("winning session was not durable", result.Code)
+			}
+			if replay := request(g, "GET", "/callback/"+name+"?state="+state+"&code=SECRET", cookie, "", ""); replay.Code != 400 || p.calls.Load() != 1 {
+				t.Fatal("restart replayed exchange")
+			}
+		})
+	}
+}

@@ -29,8 +29,10 @@ jobs:
     uses: ./.github/workflows/monitoring.yml
   retention:
     uses: ./.github/workflows/audit.yml
+  protocol-session:
+    uses: ./.github/workflows/security-fuzz.yml
   publish:
-    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention]
+    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention, protocol-session]
     runs-on: ubuntu-24.04
     environment: release
     timeout-minutes: 30

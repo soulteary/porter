@@ -3,7 +3,7 @@
 The protocol/session fuzz workflow uses synthetic local adapters and disposable
 bbolt files. It never reads production configuration or sends authorization codes
 to a real provider. Normal Go tests run the seed corpus under the race detector;
-PR/main fuzz jobs spend 20 seconds per target with two workers, and weekly jobs
+Release gates and PR/main fuzz jobs spend 20 seconds per target with two workers, and weekly jobs
 spend two minutes per target. These are bounded exploration budgets, not proof
 that every protocol or concurrency state has been covered.
 
@@ -12,7 +12,9 @@ that every protocol or concurrency state has been covered.
   rejection. Invalid Google signatures cannot authenticate, successful identities
   retain their provider/client namespace, and errors cannot disclose fixture
   credentials. A local transport forbids every non-fixture destination.
-- `FuzzCallbackSingleUse` mutates raw query strings and cookie headers. It checks
+- `FuzzCallbackSingleUse` mutates raw query strings and cookie headers across all four provider routes.
+  Eligible callbacks must succeed once, so an adapter that rejects everything
+  cannot satisfy the oracle. It checks
   browser/state binding, duplicate-parameter rejection, replay prevention and
   session-cookie attributes. Its adapter counts exchanges but performs no HTTP.
 - `FuzzSessionRevocationAcrossRestart` compares store operations to a small state
@@ -23,7 +25,10 @@ that every protocol or concurrency state has been covered.
 The four-provider concurrency acceptance pauses an exchange, sends a parallel
 callback, revokes the browser through logout, then releases the exchange. No
 session may be issued, and reopening the database must not allow late issuance
-or another exchange. This does not change the running service's configuration.
+or another exchange. A second test starts 16 callbacks together for each provider:
+exactly one must win and its session must remain usable after database reopen.
+The release publishing job requires the protocol/session fuzz workflow.
+This does not change the running service's configuration.
 
 ```sh
 go test -race ./...
