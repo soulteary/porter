@@ -59,9 +59,12 @@ only evidence of authenticity.
 ```
 
 The source stays read-only. Restore checks its digest and database structure,
-creates a private temporary copy, removes and recreates all three authentication
-buckets (`sessions`, `families`, `transactions`), then atomically publishes the
-new file without overwriting any existing destination. It rejects unknown bucket
+creates a fresh private database containing only empty `sessions`, `families` and
+`transactions` buckets, then atomically publishes the new file without overwriting
+any existing destination. No snapshot pages are copied: deleting buckets in a
+copied file would leave old records and an alternate bbolt meta page that could
+revive snapshot sessions if the newest meta page were damaged. Both valid meta
+pages in the recovered file therefore originate from an empty database. It rejects unknown bucket
 schemas instead of claiming compatibility with a future release. The original
 snapshot is unchanged. The resulting file belongs to the invoking user; set the
 service UID/GID while Porter is stopped before deployment. No secret or record
@@ -86,5 +89,7 @@ restore obsolete identity bindings or revoked provider applications.
 predating logout, mandatory login-state invalidation, fresh login and persistent
 revocation, live-writer refusal, unchanged source, checksum mismatch, corruption,
 unknown schema, unsafe paths/permissions, no overwrite and redacted diagnostics.
+It also inspects the recovered bytes for old authentication keys and damages the
+newest meta page to verify that bbolt fallback cannot revive sessions or callbacks.
 The regular Go workflow runs this suite; the production upgrade/rollback,
 provider single-attempt exchange, browser and Nginx boundary suites remain required.

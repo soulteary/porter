@@ -94,7 +94,7 @@ func operate(command, source, destination, expected string, stopped bool) (strin
 			return "", refused
 		}
 		// Reject damaged snapshots before bbolt parses their page structure.
-		// The copied bytes are hashed again under the lock before publication.
+		// The source is hashed again under the lock before creating the output.
 		actual, err := digest(source)
 		if err != nil || actual != expected {
 			return "", refused
@@ -120,18 +120,13 @@ func operate(command, source, destination, expected string, stopped bool) (strin
 		f.Close()
 		return "", refused
 	}
-	// Restore hashes and copies the original bytes under the same database lock.
-	// Backup uses bbolt's supported transaction snapshot writer.
+	// Recheck the trusted source under its bbolt lock. Recovery creates a fresh
+	// database: copying old pages and deleting buckets leaves an alternate meta
+	// page capable of selecting the snapshot's pre-revocation state.
 	if command == "restore" {
-		var input *os.File
-		input, err = os.Open(source)
-		if err == nil {
-			h := sha256.New()
-			_, err = io.Copy(io.MultiWriter(f, h), input)
-			input.Close()
-			if err == nil && hex.EncodeToString(h.Sum(nil)) != expected {
-				err = refused
-			}
+		actual, hashErr := digest(source)
+		if hashErr != nil || actual != expected {
+			err = refused
 		}
 	} else {
 		err = db.View(func(tx *bolt.Tx) error { _, err := tx.WriteTo(f); return err })
@@ -150,19 +145,16 @@ func operate(command, source, destination, expected string, stopped bool) (strin
 		if err != nil {
 			return "", refused
 		}
-		err = check(restored)
-		if err == nil {
-			err = restored.Update(func(tx *bolt.Tx) error {
-				for _, name := range buckets {
-					if err := tx.DeleteBucket([]byte(name)); err != nil {
-						return err
-					}
-					if _, err := tx.CreateBucket([]byte(name)); err != nil {
-						return err
-					}
+		err = restored.Update(func(tx *bolt.Tx) error {
+			for _, name := range buckets {
+				if _, err := tx.CreateBucket([]byte(name)); err != nil {
+					return err
 				}
-				return nil
-			})
+			}
+			return nil
+		})
+		if err == nil {
+			err = check(restored)
 		}
 		closeErr := restored.Close()
 		if err != nil || closeErr != nil {

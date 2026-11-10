@@ -194,3 +194,82 @@ func TestRejectsUnknownSchema(t *testing.T) {
 		t.Fatal("unknown schema accepted")
 	}
 }
+
+func TestRestoreDoesNotRetainAuthenticationPages(t *testing.T) {
+	d := directory(t)
+	source := filepath.Join(d, "source.db")
+	snapshot := filepath.Join(d, "snapshot.db")
+	output := filepath.Join(d, "recovered.db")
+	db := seed(t, source)
+	db.Close()
+	sum, err := operate("backup", source, snapshot, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = operate("restore", snapshot, output, sum, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{store.Key("session-SECRET"), store.Key("state-SECRET"), store.Key("browser-SECRET")} {
+		if bytes.Contains(data, []byte(key)) {
+			t.Fatal("recovered file retains old authentication pages")
+		}
+	}
+}
+
+func TestRestoreMetaFallbackCannotReviveSnapshotSession(t *testing.T) {
+	d := directory(t)
+	source := filepath.Join(d, "source.db")
+	snapshot := filepath.Join(d, "snapshot.db")
+	output := filepath.Join(d, "recovered.db")
+	db := seed(t, source)
+	db.Close()
+	sum, err := operate("backup", source, snapshot, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = operate("restore", snapshot, output, sum, true); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := bolt.Open(output, 0600, &bolt.Options{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var offset int64
+	err = raw.View(func(tx *bolt.Tx) error { offset = int64(tx.ID()%2)*int64(raw.Info().PageSize) + 16; return nil })
+	raw.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Damage only the newest meta page's magic. bbolt may select the other
+	// valid page, which must never refer to the snapshot's login records.
+	f, err := os.OpenFile(output, os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := make([]byte, 1)
+	_, err = f.ReadAt(one, offset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one[0] ^= 0xff
+	_, err = f.WriteAt(one, offset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	recovered, err := store.Open(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Close()
+	if _, err = recovered.Session("session-SECRET"); !errors.Is(err, store.ErrMissing) {
+		t.Fatal("meta fallback revived snapshot session", err)
+	}
+	if _, err = recovered.Consume("state-SECRET", "browser-SECRET", "github"); !errors.Is(err, store.ErrMissing) {
+		t.Fatal("meta fallback revived pending callback", err)
+	}
+}
