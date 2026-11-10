@@ -1,0 +1,21 @@
+name: Monitoring rules
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  monitoring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Prometheus configuration and alert behavior
+        run: |
+          docker build -f tests/monitoring/Dockerfile --target rules -t porter-monitoring .
+          docker run --rm porter-monitoring check config --syntax-only /etc/prometheus/prometheus.yml
+          docker run --rm porter-monitoring test rules porter.test.yml
+      - name: Validate blackbox configuration
+        run: |
+          docker build -f tests/monitoring/Dockerfile --target blackbox -t porter-blackbox-check .
+          docker run --rm porter-blackbox-check --config.file=/etc/blackbox_exporter/config.yml --config.check

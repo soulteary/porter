@@ -1,0 +1,59 @@
+groups:
+  - name: porter
+    rules:
+      - alert: PorterScrapeUnavailable
+        expr: up{job="porter"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: Porter management scrape is unavailable
+          description: Check process state, private monitoring connectivity and the management credential.
+      - alert: PorterReadinessFailed
+        expr: probe_success{job="porter-readiness"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: Porter readiness probe is failing
+          description: Check storage, maintenance, draining state and configured Stargate readiness. A ready identity-only service does not prove /auth is configured.
+      - alert: PorterReadinessProbeUnavailable
+        expr: up{job="porter-readiness"} == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: Porter readiness exporter is unavailable
+          description: Check the private blackbox exporter and probe configuration before attributing the failure to Porter.
+      - alert: PorterAuditDropped
+        expr: increase(porter_audit_dropped_total{job="porter"}[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: Porter audit records were dropped
+          description: Inspect queue pressure and storage performance. Authentication continues; missing audit records cannot be reconstructed from this counter.
+      - alert: PorterAuditWriteFailed
+        expr: increase(porter_audit_write_failures_total{job="porter"}[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: Porter audit persistence failed
+          description: Check journal permissions, mount access, free space and storage health. Preserve the session database while repairing the audit destination.
+      - alert: PorterLoginCallbackFailureRate
+        expr: |
+          (sum by (job, instance, provider) (increase(porter_auth_events_total{job="porter",action="login_callback",result="failure",reason!="rate_limited"}[5m]))
+          / sum by (job, instance, provider) (increase(porter_auth_events_total{job="porter",action="login_callback",reason!="rate_limited"}[5m])) > 0.2)
+          and on (job, instance, provider)
+          (sum by (job, instance, provider) (increase(porter_auth_events_total{job="porter",action="login_callback",reason!="rate_limited"}[5m])) >= 20)
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Porter login callback failure rate is elevated
+          description: Check bounded failure reasons and provider availability. This rule excludes ordinary unauthenticated access checks and requires at least 20 callbacks per five minutes.
+      - alert: PorterAuthenticationLatency
+        expr: |
+          (histogram_quantile(0.95, sum by (job, instance, path, le)
+            (rate(porter_request_duration_seconds_bucket{job="porter",path=~"/auth|/callback/\\{provider\\}"}[5m]))) > 2)
+          and on (job, instance, path)
+          (sum by (job, instance, path)
+            (increase(porter_request_duration_seconds_count{job="porter",path=~"/auth|/callback/\\{provider\\}"}[5m])) >= 20)
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Porter authentication latency is elevated
+          description: Check upstream latency and storage contention. The threshold is an initial operating value, not a service-level guarantee.
