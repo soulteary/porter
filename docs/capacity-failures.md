@@ -76,3 +76,8 @@ while other local verification was active. They establish a reproducible startin
 sample, not an isolated throughput limit, percentile distribution or capacity
 recommendation. Repeat on the target Linux filesystem and deployment limits
 before making sizing decisions.
+
+The connection-pool test requires 32 simultaneously occupied upstream slots and
+64 calls attempting acquisition before cancellation. It rejects both an undersized
+pool and requests exceeding the cap; merely seeing one timed-out request is not
+accepted as evidence of saturation.
