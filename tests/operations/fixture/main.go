@@ -95,7 +95,7 @@ func main() {
 		text = strings.ReplaceAll(text, "/etc/prometheus/porter.rules.yml", "/fixture/porter.rules.yml")
 		text = strings.ReplaceAll(text, "/run/secrets/porter-management-key", "/fixture/secrets/management-key")
 		text = strings.ReplaceAll(text, "porter:9093", os.Args[2]+":9093")
-		text = strings.ReplaceAll(text, "blackbox:9115", os.Args[2]+":9115")
+		text = strings.ReplaceAll(text, "blackbox:9115", os.Args[3]+":9115")
 		write("/fixture/prometheus.yml", []byte(text), 0644)
 		data, err = os.ReadFile("/source/blackbox.yml")
 		must(err)

@@ -30,7 +30,9 @@ Acceptance covers:
 - A changed mounted management key leaving the running Porter's loaded key intact.
   Credential mismatch causes scrape/readiness alerts; the exporter remains up.
 - Coordinated stop/start loading the new key, rejecting the old one, restoring
-  actual scrapes and resolving the alerts. An existing session survives; logout
+  actual scrapes and resolving the alerts in the same running Prometheus instance.
+  A rule evaluation after recovered scrapes is required; rebuilding monitoring
+  cannot substitute for alert resolution. An existing session survives; logout
   still revokes it. Identity-only `/auth` remains fail-closed.
 - An exporter outage causing its own alert, followed by exporter recovery.
 - Absence of synthetic keys, cookies, provider secrets and contacts from container
@@ -49,8 +51,8 @@ Use infrastructure-owned private networks/firewalls and a distinct management
 credential. The blackbox `/probe` API accepts arbitrary targets and attaches the
 module credential: allow only the trusted Prometheus peer to reach it. A private
 port alone is insufficient if untrusted applications share its network. Restrict
-Prometheus access as well. This acceptance topology shares a network namespace
-only to bind explicit test interfaces; it is not a production Compose template.
+Prometheus access as well. The monitoring processes have independent network namespaces and remain alive
+while Porter restarts. This acceptance topology is not a production Compose template.
 
 Deploying alert routing, paging credentials, persistent Prometheus retention,
 TLS, dashboards and network policy remains an infrastructure responsibility.
