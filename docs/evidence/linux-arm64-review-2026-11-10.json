@@ -1,0 +1,44 @@
+{
+  "passed": true,
+  "checks": [
+    "bounded_identity_reads",
+    "snapshot_revoked_after_backup_not_revived",
+    "all_restored_sessions_invalid",
+    "restored_callback_denied",
+    "fresh_session_logout_persists"
+  ],
+  "system": "Linux",
+  "architecture": "aarch64",
+  "docker_server_version": "29.2.1",
+  "candidate_image_id": "sha256:7022a1db6b4c62977929dac8a127518582e28b2cadd799d1e5989f8d4773b124",
+  "limits": {
+    "cpus": 0.5,
+    "memory_mib": 256,
+    "pids": 128
+  },
+  "latency": {
+    "duration_seconds": 19.901602474,
+    "offered_qps": 10,
+    "p50_ms": 0.6684749999999999,
+    "p95_ms": 0.976227,
+    "p99_ms": 1.40021,
+    "requests": 200
+  },
+  "timings": {
+    "initial_ready_seconds": 0.666,
+    "backup_seconds": 0.311,
+    "restore_seconds": 0.295,
+    "restored_ready_seconds": 0.669
+  },
+  "network_egress_disabled": true,
+  "fresh_session_deadline_still_future": true,
+  "synthetic_only": true,
+  "live_provider_login": false,
+  "rpo_claimed": false,
+  "incident_rto_claimed": false,
+  "acceptance_date": "2026-11-10",
+  "production_source_commit": "3817907fce6a2cb5d55b594f2f9a0f30d81e85cc",
+  "harness_commit": "9f11459",
+  "existing_application_container_ids_and_health_unchanged": true,
+  "measurement_path": "bounded Go peer inside internal Docker network; no published ports"
+}

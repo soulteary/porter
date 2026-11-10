@@ -53,3 +53,10 @@ p99 39.337 ms. Backup and restore commands took 0.342 s and 0.314 s;
 restored readiness took 0.371 s. The existing application containers retained
 their IDs and health across the drill. These are single-run observations on a
 shared host under the stated container limits, not service-level objectives.
+
+The [review rerun](evidence/linux-arm64-review-2026-11-10.json) uses the internal
+Go peer without publishing ports. It confirms that the fresh session's deadline
+is still in the future after logout/restart, and that old snapshot sessions and
+callbacks remain invalid. The earlier host-client latency numbers above include
+a different measurement path and must not be directly compared with this peer's
+network-local samples. Both are bounded synthetic observations, not capacity SLAs.
