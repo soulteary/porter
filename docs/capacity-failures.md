@@ -57,3 +57,22 @@ checks hardened container operation and persistent revocation across rollback.
 Fault injection uses isolated local test servers and synthetic records only.
 Do not fill a production database, revoke real users, exhaust a host disk, or send
 synthetic authorization codes to live providers as a capacity test.
+
+## Initial local sample
+
+At the capacity implementation `5d88a9e` on 2026-11-10, Go 1.27.3,
+macOS 26.5.1/arm64, Apple M5, default GOMAXPROCS 10, a local working directory,
+and default durable bbolt writes, three 100-iteration runs produced:
+
+```text
+BenchmarkSessionRead-10       15266 / 4306 / 2927 ns/op
+                             1460 / 1667 / 1624 B/op; 16 allocs/op
+BenchmarkLoginLogout-10       36418128 / 37482243 / 48594948 ns/op
+                             82514 / 82751 / 83133 B/op; 264 allocs/op
+```
+
+These short runs include scheduling and storage variance and were collected
+while other local verification was active. They establish a reproducible starting
+sample, not an isolated throughput limit, percentile distribution or capacity
+recommendation. Repeat on the target Linux filesystem and deployment limits
+before making sizing decisions.
