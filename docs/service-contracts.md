@@ -8,7 +8,8 @@ or production configuration is loaded.
 
 The tests cover the Porter -> Stargate -> Warden delegation path, both identity
 headers, role propagation, forged client headers, direct unauthenticated access,
-contact reassignment, inactive directory users and logout across Porter restart.
+contact reassignment, inactive directory users, upstream outage/recovery and logout
+across Porter restart.
 Directory changes restart only the test Warden and Stargate to avoid conflating
 cache lifetime with identity enforcement. This does not measure live cache
 invalidation latency. No browser credential or upstream cookie may appear in the
@@ -31,3 +32,9 @@ This is service contract acceptance, not real GitHub, Google, WeChat or QQ login
 Those flows still require dedicated test applications and approved callback URLs.
 Do not publish this synthetic fixture as a public login endpoint or reuse existing
 production secrets to make the tests pass.
+
+The [2026-11-10 target ARM64 run](evidence/service-contracts-arm64-2026-11-10.json)
+passed the identity, denial, directory-change, upstream outage/recovery and
+persistent logout checks. The existing application containers retained their IDs
+and health. The candidate uses unchanged production sources at the recorded
+commit; the evidence contains no live provider application result.

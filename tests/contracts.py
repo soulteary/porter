@@ -30,14 +30,14 @@ def main():
         return subprocess.check_output(['docker', *arguments], cwd=ROOT, text=True, stderr=subprocess.STDOUT).strip()
 
     def initialize(command):
-        docker('run', '--rm', '--network', 'none', '--user', '0:0', '-v', data + ':/data', '-v', fixture + ':/fixture', peer, command)
+        docker('run', '--rm', '--network', 'none', '--user', '0:0', '--cpus', '0.5', '--memory', '256m', '--pids-limit', '128', '-v', data + ':/data', '-v', fixture + ':/fixture', peer, command)
 
     def request(role, route, key=None, method='GET'):
         port = {'porter': 8083, 'stargate': 8080, 'warden': 8081}[role]
         command = ['request', method, 'http://' + role + ':' + str(port) + route]
         if key:
             command.append(key)
-        return json.loads(docker('run', '--rm', '--network', network, '--cap-drop', 'ALL', peer, *command))
+        return json.loads(docker('run', '--rm', '--network', network, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--cpus', '0.5', '--memory', '64m', '--pids-limit', '64', peer, *command))
 
     def wait(role, route):
         deadline = time.monotonic() + 45
@@ -117,6 +117,12 @@ def main():
         checks.append('inactive_directory_identity_denied')
         reload_directory('restore')
         auth(200)
+        docker('stop', '--time', '20', names['stargate'])
+        auth(503)
+        docker('start', names['stargate'])
+        wait('stargate', '/healthz')
+        auth(200)
+        checks.append('upstream_outage_fails_closed_and_recovers')
         assert request('porter', '/logout', 'proxy', 'POST')['status'] == 303
         auth(401)
         docker('stop', '--time', '20', names['porter'])
