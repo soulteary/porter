@@ -379,3 +379,6 @@ live provider authorization or a deployment against a real Warden directory.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+Offline database backup, session-invalidating recovery and verification are described in
+[backup-recovery.md](docs/backup-recovery.md).
