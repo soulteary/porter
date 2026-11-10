@@ -42,6 +42,8 @@ func FuzzCallbackSingleUse(f *testing.F) {
 			f.Add(index, query, "__Host-porter_transaction="+browser)
 		}
 		f.Add(index, "state="+state+"&code=code", "__Host-porter_transaction=wrong-browser")
+		f.Add(index, "state="+state+"&code=code", "__Host-porter_transaction="+browser+"; __Host-porter_transaction="+browser)
+		f.Add(index, "state="+state+"&code=code", "__Host-porter_transaction=wrong-browser; __Host-porter_transaction="+browser)
 	}
 	f.Fuzz(func(t *testing.T, index uint8, query, cookie string) {
 		if len(query) > 32768 || len(cookie) > 1024 {
@@ -64,7 +66,16 @@ func FuzzCallbackSingleUse(f *testing.F) {
 			req.Header.Set("Cookie", cookie)
 			return req
 		}
-		bound := g.readCookie(input(), "transaction") == browser
+		// Keep the oracle independent from the validator under test: accepting
+		// a duplicate transaction cookie must not redefine that input as bound.
+		count, value := 0, ""
+		for _, parsedCookie := range input().Cookies() {
+			if parsedCookie.Name == "__Host-porter_transaction" {
+				count++
+				value = parsedCookie.Value
+			}
+		}
+		bound := count == 1 && value == browser
 		call := func() *httptest.ResponseRecorder {
 			w := httptest.NewRecorder()
 			g.Handler().ServeHTTP(w, input())

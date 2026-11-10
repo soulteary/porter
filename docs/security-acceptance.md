@@ -14,7 +14,8 @@ that every protocol or concurrency state has been covered.
   credentials. A local transport forbids every non-fixture destination.
 - `FuzzCallbackSingleUse` mutates raw query strings and cookie headers across all four provider routes.
   Eligible callbacks must succeed once, so an adapter that rejects everything
-  cannot satisfy the oracle. It checks
+  cannot satisfy the oracle. Cookie binding is checked with an independent
+  cookie-count oracle, including duplicate-cookie seed cases. It checks
   browser/state binding, duplicate-parameter rejection, replay prevention and
   session-cookie attributes. Its adapter counts exchanges but performs no HTTP.
 - `FuzzSessionRevocationAcrossRestart` compares store operations to a small state
@@ -42,6 +43,8 @@ uploads them on failure for 14 days. Reproduce, minimize and review a failure
 before changing a validator or corpus expectation. Do not weaken a negative
 assertion to make a corpus pass. Real provider applications, QR interaction,
 network behavior and Stargate/Warden interoperability need their separate
-controlled acceptance. Existing wire-level single-attempt tests remain required:
+controlled acceptance. The shared-adapter concurrency test also sends 16 distinct codes per provider
+to a real local HTTP server returning 401, and requires exactly one request for
+each code. Existing wire-level single-attempt tests remain required:
 HTTP/1 only for code exchange, no connection reuse, no redirects, no oauth2 auth
 style probing, and rejection of unknown retry-capable transports.
