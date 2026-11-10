@@ -42,3 +42,9 @@ passed the identity, denial, directory-change, upstream outage/recovery and
 persistent logout checks. The existing application containers retained their IDs
 and health. The candidate uses unchanged production sources at the recorded
 commit; the evidence contains no live provider application result.
+
+The [review rerun](evidence/service-contracts-arm64-review-2026-11-10.json) also
+passed complete response-header inventory, independent proxy/session credential
+requirements and invalid forwarded-context denial. Existing application IDs and
+health were unchanged. The report contains check names and image identities,
+without request credentials or response header values.
