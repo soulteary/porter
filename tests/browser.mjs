@@ -75,10 +75,23 @@ try {
   await call('Fetch.enable', { patterns: ['https://github.com/login/oauth/authorize*', 'https://accounts.google.com/o/oauth2/v2/auth*',
     'https://open.weixin.qq.com/connect/qrconnect*', 'https://graph.qq.com/oauth2.0/authorize*']
     .map(urlPattern => ({ urlPattern, requestStage: 'Request' })) });
+  function navigationRace(error) {
+    return /"code":-32000/.test(error.message) &&
+      /Inspected target navigated or closed|Execution context was destroyed|Cannot find context with specified id/.test(error.message);
+  }
   async function evaluate(expression) {
     if (interceptionError) throw interceptionError;
-    const result = await call('Runtime.evaluate', { expression, returnByValue: true, userGesture: true });
-    return result.result?.value;
+    try {
+      const result = await call('Runtime.evaluate', { expression, returnByValue: true, userGesture: true });
+      if (result.exceptionDetails) throw new Error('Browser expression failed');
+      return result.result?.value;
+    } catch (error) {
+      // A navigation can destroy the old document before CDP answers. Polling
+      // reads the next document; form submission is never repeated. Its caller
+      // still requires the expected destination and session/revocation result.
+      if (navigationRace(error)) return false;
+      throw error;
+    }
   }
   async function loginPage() {
     await call('Page.navigate', { url: `${origin}/login` });
