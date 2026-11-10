@@ -78,8 +78,19 @@ def main():
         for image, path in [(porter, 'Dockerfile'), (peer, 'tests/operations/Dockerfile')]:
             subprocess.run(['docker', 'build', '-f', path, '-t', image, '.'], cwd=ROOT, check=True)
             images.append(image)
+        network_ids = docker('network', 'ls', '-q').split()
+        existing = json.loads(docker('network', 'inspect', *network_ids)) if network_ids else []
+        occupied = [ipaddress.ip_network(item['Subnet']) for network in existing
+                    for item in (network.get('IPAM', {}).get('Config') or []) if item.get('Subnet')]
+        # Docker requires a user-configured subnet for explicit container IPs.
+        # Select unused private /24s instead of relying on its implicit IPAM pool.
+        candidates = [ipaddress.ip_network('10.240.' + str((int(suffix[:2], 16) + offset) % 256) + '.0/24')
+                      for offset in range(256)]
         for name in (appnet, monitor):
-            docker('network', 'create', '--internal', name)
+            subnet = next(candidate for candidate in candidates
+                          if not any(candidate.version == other.version and candidate.overlaps(other) for other in occupied))
+            docker('network', 'create', '--internal', '--subnet', str(subnet), name)
+            occupied.append(subnet)
             networks.append(name)
         for name in (data, fixture):
             docker('volume', 'create', name)
@@ -138,17 +149,28 @@ def main():
         wait(lambda: alert('PorterReadinessProbeUnavailable', True), 'exporter outage alert did not fire')
         docker('start', blackbox)
         wait(lambda: value('probe_success{job="porter-readiness"}', 1) and alert('PorterReadinessProbeUnavailable', False), 'exporter outage did not recover')
+        # Revocation must remain durable through another key-preserving restart.
+        remove_sidecars()
+        docker('stop', '--time', '20', service)
+        assert docker('inspect', '--format', '{{.State.ExitCode}}', service) == '0'
+        docker('start', service)
+        wait(lambda: request('http://' + ip + ':9093/readyz', 'new')['status'] == 200, 'post-logout restart failed')
+        assert request('http://' + app_ip + ':8083/identity', 'proxy', network=appnet)['status'] == 401
+        sidecars()
+        wait(lambda: value('up{job="porter"}', 1) and value('probe_success{job="porter-readiness"}', 1), 'post-logout monitoring failed')
         observations = json.dumps(query('ALERTS')) + json.dumps(query('up'))
         for name in containers:
             observations += docker('logs', name)
         for private in ('m' * 32, 'n' * 32, 'p' * 32, 'C' * 43, 'provider-SECRET', 'fixture@example.test'):
             assert private not in observations, 'secret in monitoring labels or logs'
         print('PASS: authenticated scrapes, isolated interfaces, alerts, key restart, preserved session and logout')
-    except Exception:
+    except Exception as error:
         def safe(text):
             for private in ('m'*32,'n'*32,'p'*32,'C'*43,'provider-SECRET','fixture@example.test'):
                 text = text.replace(private,'[redacted]')
             return text
+        if isinstance(error, subprocess.CalledProcessError):
+            print(safe(error.output or 'container command failed'))
         for name in containers:
             print(name, safe(docker('logs', name)))
         if prometheus in containers:
