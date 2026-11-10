@@ -7,6 +7,8 @@ SBOM and a complete Trivy vulnerability report. Fixable HIGH/CRITICAL findings
 fail the job. Unfixed findings remain visible in the full report and require
 operator assessment; the gate does not claim absence of all vulnerabilities.
 Scanner errors and unavailable vulnerability databases fail rather than passing.
+The native arm64 job also runs the production startup/upgrade/rollback suite;
+amd64 service acceptance runs in the existing production workflow.
 Reports are retained as workflow artifacts for 14 days. No provider credentials,
 production configuration, registry publishing tokens or OIDC permissions are
 available to these PR jobs. Fork PRs use `pull_request`, never `pull_request_target`.
