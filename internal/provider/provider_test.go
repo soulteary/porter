@@ -335,7 +335,7 @@ func TestMalformedProviderResponses(t *testing.T) {
 // Code exchanges must never replay, including GET-based WeChat and QQ flows.
 func TestCodeExchangeIsSingleAttempt(t *testing.T) {
 	for _, name := range []string{"github", "google", "wechat", "qq"} {
-		for _, failure := range []string{"503", "429", "401", "disconnect", "redirect"} {
+		for _, failure := range []string{"503", "429", "401", "disconnect", "redirect", "timeout"} {
 			t.Run(name+"/"+failure, func(t *testing.T) {
 				var hits, redirected atomic.Int32
 				target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected.Add(1) }))
@@ -347,6 +347,11 @@ func TestCodeExchangeIsSingleAttempt(t *testing.T) {
 					}
 					hits.Add(1)
 					switch failure {
+					case "timeout":
+						select {
+						case <-r.Context().Done():
+						case <-time.After(500 * time.Millisecond):
+						}
 					case "disconnect":
 						conn, _, err := w.(http.Hijacker).Hijack()
 						if err != nil {
@@ -369,7 +374,11 @@ func TestCodeExchangeIsSingleAttempt(t *testing.T) {
 					}
 				}))
 				defer source.Close()
-				client := outbound.New(time.Second)
+				timeout := time.Second
+				if failure == "timeout" {
+					timeout = 100 * time.Millisecond
+				}
+				client := outbound.New(timeout)
 				defer client.CloseIdleConnections()
 				exchange := outbound.Exchange(client)
 				defer exchange.CloseIdleConnections()

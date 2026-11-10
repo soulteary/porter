@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -143,5 +144,92 @@ func TestExchangeRejectsUnknownTransports(t *testing.T) {
 	}
 	if source.Transport != transport {
 		t.Fatal("mutated caller transport")
+	}
+}
+
+func TestSaturatedPoolReleasesCallsOnCancellation(t *testing.T) {
+	var active, peak atomic.Int32
+	entered := make(chan struct{}, 64)
+	finished := make(chan struct{}, 64)
+	acquiring := make(chan struct{}, 64)
+	release := make(chan struct{})
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := active.Add(1)
+		defer func() { active.Add(-1); finished <- struct{}{} }()
+		for old := peak.Load(); current > old; old = peak.Load() {
+			if peak.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		entered <- struct{}{}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); close(release); source.Close() }()
+	client := New(10 * time.Second)
+	defer client.CloseIdleConnections()
+	var wg sync.WaitGroup
+	for range 64 {
+		wg.Go(func() {
+			traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GetConn: func(string) { acquiring <- struct{}{} }})
+			req, _ := http.NewRequestWithContext(traced, "GET", source.URL, nil)
+			resp, err := client.Do(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if err == nil {
+				t.Error("slow upstream succeeded")
+			}
+		})
+	}
+	// Require all 32 slots to be occupied and all 64 calls to have reached
+	// connection acquisition. A smaller pool must not satisfy this test.
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for range 64 {
+		select {
+		case <-acquiring:
+		case <-deadline.C:
+			t.Fatal("calls did not reach connection acquisition")
+		}
+	}
+	for range 32 {
+		select {
+		case <-entered:
+		case <-deadline.C:
+			t.Fatal("pool did not reach its 32-connection capacity")
+		}
+	}
+	select {
+	case <-entered:
+		t.Fatal("more than 32 requests entered the held upstream")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if active.Load() != 32 || peak.Load() != 32 {
+		t.Fatal("pool was not saturated", active.Load(), peak.Load())
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("saturated calls did not cancel")
+	}
+	stopped := time.NewTimer(3 * time.Second)
+	defer stopped.Stop()
+	for range 32 {
+		select {
+		case <-finished:
+		case <-stopped.C:
+			t.Fatal("upstream handlers did not observe cancellation")
+		}
+	}
+	source.Close()
+	if active.Load() != 0 {
+		t.Fatal("upstream requests leaked after cancellation")
 	}
 }
