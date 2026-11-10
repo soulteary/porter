@@ -14,3 +14,8 @@
 !tests/monitoring/**
 !tests/operations/
 !tests/operations/**
+!tests/fixture/
+!tests/fixture/**
+!tools/
+!tools/recovery/
+!tools/recovery/**

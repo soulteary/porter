@@ -38,6 +38,24 @@ func main() {
 	switch os.Args[1] {
 	case "unsafe-audit":
 		must(os.Chmod(dir+"/audit.jsonl", 0644))
+	case "verify-recovered":
+		c := load()
+		db, err := store.Open(c.Database)
+		must(err)
+		defer db.Close()
+		for _, token := range []string{"L", "C", "R", "E"} {
+			if _, err := db.Session(strings.Repeat(token, 43)); !errors.Is(err, store.ErrMissing) {
+				panic("restored session remained valid")
+			}
+		}
+		for _, pair := range [][2]string{{"P", "B"}, {"Q", "D"}} {
+			if _, err := db.Consume(strings.Repeat(pair[0], 43), strings.Repeat(pair[1], 43), "github"); !errors.Is(err, store.ErrMissing) {
+				panic("restored transaction remained valid")
+			}
+		}
+	case "prepare-directory":
+		must(os.Chown(dir, 65532, 65532))
+		must(os.Chmod(dir, 0700))
 	case "seed":
 		seed()
 	case "arm-expiry":
