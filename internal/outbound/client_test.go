@@ -145,3 +145,54 @@ func TestExchangeRejectsUnknownTransports(t *testing.T) {
 		t.Fatal("mutated caller transport")
 	}
 }
+
+func TestSaturatedPoolReleasesCallsOnDeadline(t *testing.T) {
+	var active, peak, hits atomic.Int32
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		current := active.Add(1)
+		defer active.Add(-1)
+		for old := peak.Load(); current > old; old = peak.Load() {
+			if peak.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		<-r.Context().Done()
+	}))
+	defer source.Close()
+	client := New(5 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	defer client.CloseIdleConnections()
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range 64 {
+		wg.Go(func() {
+			<-start
+			req, _ := http.NewRequestWithContext(ctx, "GET", source.URL, nil)
+			resp, err := client.Do(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if err == nil {
+				t.Error("slow upstream succeeded")
+			}
+		})
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("saturated calls did not respect deadline")
+	}
+	if hits.Load() == 0 || peak.Load() > 32 {
+		t.Fatal("pool limit not enforced", hits.Load(), peak.Load())
+	}
+	// Closing the test server waits for server-side cancellation before return.
+	source.Close()
+	if active.Load() != 0 {
+		t.Fatal("upstream requests leaked after cancellation")
+	}
+}
