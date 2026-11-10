@@ -11,14 +11,18 @@ jobs:
   release-policy:
     permissions:
       actions: read
+      contents: read
     runs-on: ubuntu-24.04
     steps:
-      - name: Require protected release environment
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Require protected release environment and tags
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/environments/release" --jq '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length > 0))' | grep -qx true
+          python3 tools/release-controls.py --check-public --expected-repository "$GITHUB_REPOSITORY"
   supply-chain:
     uses: ./.github/workflows/supply-chain.yml
   compatibility:
@@ -29,10 +33,12 @@ jobs:
     uses: ./.github/workflows/monitoring.yml
   retention:
     uses: ./.github/workflows/audit.yml
+  protocol-session:
+    uses: ./.github/workflows/security-fuzz.yml
   service-contracts:
     uses: ./.github/workflows/service-contracts.yml
   publish:
-    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention, service-contracts]
+    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention, protocol-session, service-contracts]
     runs-on: ubuntu-24.04
     environment: release
     timeout-minutes: 30
