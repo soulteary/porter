@@ -13,8 +13,10 @@ python3 tests/linux.py --porter-image porter-linux:candidate \
   --evidence linux-evidence.json
 ```
 
-The harness creates randomly named volumes and containers. HTTP and management
-ports bind only to loopback. Cleanup removes only resources created by the run;
+The harness creates randomly named volumes and containers. The candidate and
+bounded HTTP peer use a dedicated internal network with no provider egress. No HTTP or management port is published. The peer measures
+latency inside that network; Docker CLI startup is outside each timed sample.
+Cleanup removes only resources created by the run;
 prebuilt images are retained for the operator. The fixture and recovery binaries
 are separate images and are never added to the production image.
 
@@ -27,9 +29,11 @@ objectives from representative workloads and the actual backup schedule.
 A snapshot is taken with Porter stopped. A session is then revoked in the source,
 after which the older snapshot is restored into a new private volume. Every old
 session and pending transaction must be invalid; an HTTP callback carrying its
-original transaction cookie must fail. A newly seeded synthetic session is accepted,
-logged out, and remains invalid after restart. Restore deliberately requires users
-to sign in again. Runtime authentication and provider exchange code are unchanged.
+original transaction cookie must fail. A newly seeded one-hour synthetic session is accepted,
+logged out, and remains invalid after restart. Its deadline must still be in the
+future after that check; natural expiration cannot satisfy the revocation test. Restore deliberately requires users
+to sign in again. Runtime authentication and provider exchange code are unchanged. The release
+publishing job requires this Linux acceptance workflow.
 
 For a shared host, capture the IDs and health of the existing application containers
 before and after the run. Do not restart them, attach their networks, mount their

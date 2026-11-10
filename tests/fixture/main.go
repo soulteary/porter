@@ -59,7 +59,9 @@ func main() {
 	case "seed":
 		seed()
 	case "arm-expiry":
-		armExpiry()
+		armExpiry(20 * time.Second)
+	case "arm-recovery-session":
+		armExpiry(time.Hour)
 	case "verify-candidate":
 		verify("P", "B")
 	case "verify":
@@ -110,12 +112,12 @@ func seed() {
 	write(dir+"/expected.json", expires)
 	fmt.Println("baseline fixture created")
 }
-func armExpiry() {
+func armExpiry(lifetime time.Duration) {
 	c := load()
 	db, err := store.Open(c.Database)
 	must(err)
 	defer db.Close()
-	expires := time.Now().UTC().Add(20 * time.Second)
+	expires := time.Now().UTC().Add(lifetime)
 	state, browser := strings.Repeat("S", 43), strings.Repeat("T", 43)
 	record := store.Record{Expires: expires, Provider: "github", Namespace: "app", Subject: "subject", UserID: "u1", Binding: c.Bindings[0].Revision()}
 	must(db.Start(state, browser, "", record))

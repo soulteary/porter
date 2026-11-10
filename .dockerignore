@@ -19,3 +19,5 @@
 !tools/
 !tools/recovery/
 !tools/recovery/**
+!tests/linux/
+!tests/linux/**

@@ -1,5 +1,6 @@
 name: Linux recovery acceptance
 on:
+  workflow_call:
   pull_request:
   push:
     branches: [main]
@@ -16,7 +17,7 @@ jobs:
       - name: Build production and test-only operator images
         run: |
           docker build --build-arg COMMIT="$GITHUB_SHA" -t porter-linux:candidate .
-          docker build -f tests/fixture.Dockerfile -t porter-linux:fixture .
+          docker build -f tests/linux/fixture.Dockerfile -t porter-linux:fixture .
           docker build -f tests/linux/recovery.Dockerfile -t porter-linux:recovery .
       - name: Bounded capacity and offline recovery acceptance
         run: python3 tests/linux.py --porter-image porter-linux:candidate --fixture-image porter-linux:fixture --recovery-image porter-linux:recovery --evidence linux-evidence.json

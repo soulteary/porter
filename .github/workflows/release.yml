@@ -29,8 +29,10 @@ jobs:
     uses: ./.github/workflows/monitoring.yml
   retention:
     uses: ./.github/workflows/audit.yml
+  linux-recovery:
+    uses: ./.github/workflows/linux-recovery.yml
   publish:
-    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention]
+    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention, linux-recovery]
     runs-on: ubuntu-24.04
     environment: release
     timeout-minutes: 30

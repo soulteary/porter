@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
 """Bounded Linux capacity and offline recovery acceptance using synthetic sessions."""
 import argparse
-import concurrent.futures
 import json
 import pathlib
 import platform
-import statistics
 import subprocess
 import time
 import uuid
-import urllib.error
-import urllib.request
 
-from production import request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -28,6 +23,8 @@ def main():
     prefix = 'porter-linux-' + uuid.uuid4().hex[:12]
     data, recovered, configuration, backup = [prefix + '-' + name for name in ('data', 'recovered', 'config', 'backup')]
     volumes, containers = [], []
+    network = prefix + "-net"
+    network_created = False
     checks, timings = [], {}
 
     def docker(*command):
@@ -37,21 +34,28 @@ def main():
         return docker('run', '--rm', '--network', 'none', '--user', '0:0', '--cpus', '0.5', '--memory', '256m', '--pids-limit', '128',
                       '-v', volume + ':/data', '-v', configuration + ':/configuration', args.fixture_image, command)
 
+    def peer(*command):
+        return json.loads(docker('run', '--rm', '--network', network, '--read-only', '--cap-drop', 'ALL',
+                                 '--security-opt', 'no-new-privileges:true', '--cpus', '0.5', '--memory', '256m', '--pids-limit', '128',
+                                 '--entrypoint', '/peer', args.fixture_image, *command))
+
+    def request(port, route, *, management=False, token=None, method='GET', transaction=False):
+        kind = 'management' if management else 'transaction' if transaction else 'session'
+        return peer('request', 'http://porter:' + port + route, method, token or '', kind)['status']
+
     def start(volume):
         begin = time.monotonic()
         name = prefix + '-' + uuid.uuid4().hex[:6]
-        docker('run', '-d', '--name', name, '--network', 'bridge', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+        docker('run', '-d', '--name', name, '--network', network, '--network-alias', 'porter', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
                '--cpus', '0.5', '--memory', '256m', '--pids-limit', '128', '-v', volume + ':/data', '-v', configuration + ':/config:ro',
-               '-p', '127.0.0.1::8083', '-p', '127.0.0.1::9093', args.porter_image, 'serve', '-config', '/config/porter.json')
+               args.porter_image, 'serve', '-config', '/config/porter.json')
         containers.append(name)
-        ports = json.loads(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', name))
-        for value in ports.values():
-            assert all(binding['HostIp'] == '127.0.0.1' for binding in value)
-        public, management = [ports[str(port) + '/tcp'][0]['HostPort'] for port in (8083, 9093)]
+        assert not json.loads(docker('inspect', '--format', '{{json .HostConfig.PortBindings}}', name)), 'published a private port'
+        public, management = '8083', '9093'
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             try:
-                if request(management, '/readyz', management=True)[0] == 200:
+                if request(management, '/readyz', management=True) == 200:
                     return name, public, round(time.monotonic() - begin, 3)
             except OSError:
                 pass
@@ -68,7 +72,7 @@ def main():
         containers.remove(name)
 
     def status(public, expected, token, route='/identity', method='GET'):
-        actual = request(public, route, token=token, method=method)[0]
+        actual = request(public, route, token=token, method=method)
         assert actual == expected, (route, actual, expected)
 
     def recovery(command, source, destination, digest=None):
@@ -84,6 +88,9 @@ def main():
         return result[7:]
 
     try:
+        docker('network', 'create', '--internal', network)
+        network_created = True
+        assert docker('network', 'inspect', '--format', '{{.Internal}}', network) == 'true'
         for volume in (data, recovered, configuration, backup):
             docker('volume', 'create', volume)
             volumes.append(volume)
@@ -96,22 +103,8 @@ def main():
         status(public, 200, 'C')
         status(public, 401, 'R')
         status(public, 401, 'E')
-        # Fixed 10 QPS for 20 seconds; never an unbounded saturation test.
-        samples = []
-        def sample():
-            begin = time.monotonic()
-            status(public, 200, 'C')
-            return (time.monotonic() - begin) * 1000
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            begin = time.monotonic()
-            for index in range(200):
-                time.sleep(max(0, begin + index / 10 - time.monotonic()))
-                futures.append(executor.submit(sample))
-            samples = [future.result() for future in futures]
-        samples.sort()
-        latency = {'requests': len(samples), 'offered_qps': 10, 'duration_seconds': round(time.monotonic() - begin, 3),
-                   'p50_ms': round(statistics.median(samples), 3), 'p95_ms': round(samples[189], 3), 'p99_ms': round(samples[197], 3)}
+        # The bounded peer samples inside the private network, without host ports.
+        latency = peer('load', 'http://porter:8083/identity')
         checks.append('bounded_identity_reads')
         stop(name)
         digest = recovery('backup', '/source/porter.db', '/backup/snapshot.db')
@@ -127,29 +120,25 @@ def main():
         status(public, 401, 'L', '/auth')
         # Pending state in the snapshot must not survive disaster recovery.
         callback = '/callback/github?state=' + 'P' * 43 + '&code=fixture-code'
-        req = urllib.request.Request('http://127.0.0.1:' + public + callback, headers={'Host': 'porter.test', 'Cookie': '__Host-porter_transaction=' + 'B' * 43})
-        client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        try:
-            response = client.open(req, timeout=2)
-        except urllib.error.HTTPError as error:
-            response = error
-        with response:
-            assert response.status == 400, 'restored callback accepted'
+        assert request(public, callback, token='B', transaction=True) == 400, 'restored callback accepted'
         checks += ['snapshot_revoked_after_backup_not_revived', 'all_restored_sessions_invalid', 'restored_callback_denied']
         stop(name)
-        helper('arm-expiry', recovered)
+        fresh_expiry_ms = int(helper('arm-recovery-session', recovered))
+        assert fresh_expiry_ms > (time.time() + 1800) * 1000, 'fresh fixture lifetime is too short'
         name, public, _ = start(recovered)
         status(public, 200, 'F')
         status(public, 303, 'F', '/logout', 'POST')
         stop(name)
         name, public, _ = start(recovered)
         status(public, 401, 'F')
+        assert fresh_expiry_ms > (time.time() + 60) * 1000, 'natural expiry could mask failed revocation'
         checks.append('fresh_session_logout_persists')
         stop(name)
         evidence = {'passed': True, 'checks': checks, 'system': platform.system(), 'architecture': platform.machine(),
                     'docker_server_version': docker('version', '--format', '{{.Server.Version}}'),
                     'candidate_image_id': docker('image', 'inspect', '--format', '{{.Id}}', args.porter_image),
                     'limits': {'cpus': 0.5, 'memory_mib': 256, 'pids': 128}, 'latency': latency, 'timings': timings,
+                    'network_egress_disabled': True, 'fresh_session_deadline_still_future': True,
                     'synthetic_only': True, 'live_provider_login': False, 'rpo_claimed': False, 'incident_rto_claimed': False}
         args.evidence.write_text(json.dumps(evidence, indent=2) + '\n')
         print('PASS: bounded Linux reads, offline recovery invalidation and persistent logout')
@@ -158,6 +147,8 @@ def main():
             subprocess.run(['docker', 'rm', '-f', '-v', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for volume in reversed(volumes):
             subprocess.run(['docker', 'volume', 'rm', volume], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if network_created:
+            subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == '__main__':
