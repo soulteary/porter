@@ -47,6 +47,9 @@ extend absolute deadlines. Sessions and pending transactions from the initial
 PR implementation require a new login after this storage change; no database
 reset is required.
 
+Mounted secret files, startup-only loading and configuration path precedence
+are documented in [secret-files.md](docs/secret-files.md).
+
 ## Identity bindings
 
 Each binding explicitly maps `(provider, namespace, subject)` to an internal
