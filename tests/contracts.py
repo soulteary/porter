@@ -111,10 +111,12 @@ def main():
                 containers.append(names[role])
                 wait(role, '/health' if role == 'warden' else '/healthz')
         auth(200)
-        checks.append('bound_identity_and_role')
+        checks += ['bound_identity_and_role', 'complete_response_header_inventory']
         for mode in (None, 'session-only', 'proxy-only', 'wrong-proxy'):
             validate_auth_response(request('porter', '/auth', mode), {401})
+        checks.append('independent_proxy_and_session_credentials_required')
         validate_auth_response(request('porter', '/auth', 'wrong-context'), {503})
+        checks.append('invalid_forwarded_context_denied')
         assert request('warden', '/user?mail=fixture@example.test')['status'] == 401
         assert request('stargate', '/_auth')['status'] in (401, 403)
         checks.append('forged_headers_and_direct_upstream_denied')
