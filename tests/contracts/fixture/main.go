@@ -75,9 +75,21 @@ func main() {
 		req.Header.Set("X-Auth-User", "attacker")
 		req.Header.Set("X-Forwarded-User", "attacker")
 		req.Header.Set("X-Stargate-Header-Auth", "attacker")
-		if len(os.Args) > 4 && os.Args[4] == "proxy" {
+		mode := ""
+		if len(os.Args) > 4 {
+			mode = os.Args[4]
+		}
+		if mode == "proxy" || mode == "proxy-only" || mode == "wrong-context" {
 			req.Header.Set("Authorization", "Bearer "+strings.Repeat("p", 32))
+		}
+		if mode == "wrong-proxy" {
+			req.Header.Set("Authorization", "Bearer attacker")
+		}
+		if mode == "proxy" || mode == "session-only" || mode == "wrong-proxy" || mode == "wrong-context" {
 			req.AddCookie(&http.Cookie{Name: "__Host-porter_session", Value: strings.Repeat("T", 43)})
+		}
+		if mode == "wrong-context" {
+			req.Header.Set("X-Forwarded-Host", "attacker.invalid")
 		}
 		client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		resp, err := client.Do(req)
@@ -89,12 +101,18 @@ func main() {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		// Capture only the output contract, never request credentials or cookies.
 		headers := map[string]string{}
-		for _, key := range []string{"X-Auth-User", "X-Forwarded-User", "X-Auth-Role", "X-Auth-Scopes", "Set-Cookie", "X-Stargate-Header-Auth", "Authorization"} {
+		for _, key := range []string{"X-Auth-User", "X-Forwarded-User", "X-Auth-Email", "X-Auth-Phone", "X-Auth-Name", "X-Auth-Role", "X-Auth-Scopes"} {
 			if value := resp.Header.Get(key); value != "" {
 				headers[key] = value
 			}
 		}
-		must(json.NewEncoder(os.Stdout).Encode(map[string]any{"status": resp.StatusCode, "headers": headers}))
+		// Report every header name/count, including empty or duplicate sensitive
+		// headers, without printing their values to acceptance diagnostics.
+		counts := map[string]int{}
+		for name, values := range resp.Header {
+			counts[strings.ToLower(name)] = len(values)
+		}
+		must(json.NewEncoder(os.Stdout).Encode(map[string]any{"status": resp.StatusCode, "headers": headers, "header_counts": counts}))
 	default:
 		os.Exit(1)
 	}

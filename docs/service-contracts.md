@@ -7,13 +7,17 @@ synthetic bindings, directory users and session records. No provider application
 or production configuration is loaded.
 
 The tests cover the Porter -> Stargate -> Warden delegation path, both identity
-headers, role propagation, forged client headers, direct unauthenticated access,
+headers, role propagation, forged client headers, valid-session/no-proxy and valid-proxy/no-session denials,
+wrong proxy keys, invalid forwarded context, direct unauthenticated access,
 contact reassignment, inactive directory users, upstream outage/recovery and logout
 across Porter restart.
 Directory changes restart only the test Warden and Stargate to avoid conflating
 cache lifetime with identity enforcement. This does not measure live cache
 invalidation latency. No browser credential or upstream cookie may appear in the
-proxy authorization response.
+proxy authorization response. The peer inventories every response header name
+and count, including empty sensitive headers, instead of filtering the response
+before checking the allowlist. Denials must contain no identity headers.
+The release publishing job requires this service contract workflow.
 
 Each service runs with 0.5 CPU, 256 MiB and 128 PIDs, a read-only root filesystem,
 dropped capabilities and no privilege escalation. The Docker network is internal;

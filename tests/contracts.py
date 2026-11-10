@@ -2,7 +2,6 @@
 """Real Porter -> Stargate -> Warden contract acceptance; synthetic local identities."""
 import argparse
 import json
-import os
 import pathlib
 import subprocess
 import tempfile
@@ -12,6 +11,24 @@ import uuid
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 STARGATE = 'ghcr.io/soulteary/stargate:1.3.6@sha256:51a5f7b854509f7f6a284ec3ffed9c4f8c787967e84679018fa8a6437819a0a4'
 WARDEN = 'ghcr.io/soulteary/warden:1.6.3@sha256:9ac7db4184d922ddaadfa99f9e65a59e88641f08181f6eab83a57c19a9e3234c'
+
+
+AUTH_HEADERS = {'x-auth-user', 'x-forwarded-user', 'x-auth-email', 'x-auth-phone', 'x-auth-name', 'x-auth-role', 'x-auth-scopes'}
+HTTP_HEADERS = {'cache-control', 'content-security-policy', 'content-type', 'content-length', 'date', 'pragma', 'referrer-policy', 'x-content-type-options', 'x-request-id'}
+
+
+def validate_auth_response(result, expected):
+    assert result['status'] in expected, 'unexpected authorization status: ' + str(result['status'])
+    counts = result['header_counts']
+    assert set(counts) <= AUTH_HEADERS | HTTP_HEADERS, 'unexpected proxy response header names: ' + str(sorted(set(counts) - AUTH_HEADERS - HTTP_HEADERS))
+    assert all(counts.get(name, 0) <= 1 for name in AUTH_HEADERS), 'duplicate authorization header'
+    output = result.get('headers', {})
+    if result['status'] == 200:
+        assert output.get('X-Auth-User') == output.get('X-Forwarded-User') == 'porter-fixture-user'
+        assert output.get('X-Auth-Role') == 'user'
+        assert output.get('X-Auth-Scopes') == 'read'
+    else:
+        assert not set(counts) & AUTH_HEADERS, 'denial returned identity headers'
 
 
 def main():
@@ -48,15 +65,7 @@ def main():
         raise AssertionError(role + ' did not become healthy')
 
     def auth(expected):
-        result = request('porter', '/auth', 'proxy')
-        assert result['status'] == expected, result
-        output = result.get('headers', {})
-        if expected == 200:
-            assert output.get('X-Auth-User') == output.get('X-Forwarded-User') == 'porter-fixture-user'
-            assert output.get('X-Auth-Role') == 'user'
-        else:
-            assert not any(key.startswith('X-Auth-') or key == 'X-Forwarded-User' for key in output), 'denial returned identity headers'
-        assert not any(key in output for key in ('Set-Cookie', 'X-Stargate-Header-Auth', 'Authorization')), 'upstream credential/cookie crossed boundary'
+        validate_auth_response(request('porter', '/auth', 'proxy'), {expected})
 
     def reload_directory(command):
         docker('stop', '--time', '20', names['stargate'], names['warden'])
@@ -103,7 +112,9 @@ def main():
                 wait(role, '/health' if role == 'warden' else '/healthz')
         auth(200)
         checks.append('bound_identity_and_role')
-        assert request('porter', '/auth')['status'] == 401
+        for mode in (None, 'session-only', 'proxy-only', 'wrong-proxy'):
+            validate_auth_response(request('porter', '/auth', mode), {401})
+        validate_auth_response(request('porter', '/auth', 'wrong-context'), {503})
         assert request('warden', '/user?mail=fixture@example.test')['status'] == 401
         assert request('stargate', '/_auth')['status'] in (401, 403)
         checks.append('forged_headers_and_direct_upstream_denied')
@@ -112,8 +123,7 @@ def main():
         checks.append('contact_reassignment_denied')
         reload_directory('disable')
         result = request('porter', '/auth', 'proxy')
-        assert result['status'] in (401, 403, 503), result
-        assert not any(key.startswith('X-Auth-') or key == 'X-Forwarded-User' for key in result.get('headers', {}))
+        validate_auth_response(result, {401, 403, 503})
         checks.append('inactive_directory_identity_denied')
         reload_directory('restore')
         auth(200)
