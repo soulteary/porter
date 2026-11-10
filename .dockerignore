@@ -12,3 +12,5 @@
 !tests/
 !tests/monitoring/
 !tests/monitoring/**
+!tests/operations/
+!tests/operations/**
