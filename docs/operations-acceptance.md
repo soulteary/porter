@@ -17,9 +17,10 @@ unit tests continue to validate production timing and thresholds separately.
 
 A mode-0440 management credential is mounted read-only into monitoring processes
 with an explicitly dedicated UID/GID. The source volume directory is mode 0750;
-Porter's private JSON remains owner-only. Credentials never appear in URLs,
-Prometheus labels, command arguments or image layers. All are synthetic and
-created at runtime by a separate test-only initializer, never by Porter itself.
+Porter's private JSON remains owner-only. No production credentials are used. Mounted synthetic management keys are written
+at runtime, and their values must not appear in URLs, Prometheus labels or
+command arguments. Fixture values are predictable by design; the test-only
+initializer and its image must never be deployed as production components.
 The initializer is not included in the production image.
 
 Acceptance covers:
