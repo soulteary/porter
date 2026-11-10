@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"errors"
+	"github.com/soulteary/porter/internal/config"
+	"github.com/soulteary/porter/internal/gateway"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,7 +239,23 @@ func TestRestoreMetaFallbackCannotReviveSnapshotSession(t *testing.T) {
 	if _, err = operate("restore", snapshot, output, sum, true); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := bolt.Open(output, 0600, &bolt.Options{ReadOnly: true})
+	damageNewestMeta(t, output)
+	recovered, err := store.Open(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Close()
+	if _, err = recovered.Session("session-SECRET"); !errors.Is(err, store.ErrMissing) {
+		t.Fatal("meta fallback revived snapshot session", err)
+	}
+	if _, err = recovered.Consume("state-SECRET", "browser-SECRET", "github"); !errors.Is(err, store.ErrMissing) {
+		t.Fatal("meta fallback revived pending callback", err)
+	}
+}
+
+func damageNewestMeta(t *testing.T, path string) {
+	t.Helper()
+	raw, err := bolt.Open(path, 0600, &bolt.Options{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +267,7 @@ func TestRestoreMetaFallbackCannotReviveSnapshotSession(t *testing.T) {
 	}
 	// Damage only the newest meta page's magic. bbolt may select the other
 	// valid page, which must never refer to the snapshot's login records.
-	f, err := os.OpenFile(output, os.O_RDWR, 0600)
+	f, err := os.OpenFile(path, os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,15 +282,85 @@ func TestRestoreMetaFallbackCannotReviveSnapshotSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
+}
+
+func TestRecoveredMetaFallbackRejectsIdentityAndStargate(t *testing.T) {
+	d := directory(t)
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("X-Stargate-Header-Auth") != strings.Repeat("s", 32) || r.Header.Get("X-User-Mail") != "owner@example.test" || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+			t.Error("Stargate credential or identity boundary changed")
+		}
+		w.Header().Set("X-Auth-User", "u1")
+		w.Header().Set("X-Forwarded-User", "u1")
+		w.Header().Set("Set-Cookie", "SECRET=upstream")
+	}))
+	defer upstream.Close()
+	binding := config.Binding{Provider: "github", Namespace: "app", Subject: "subject", UserID: "u1", Mail: "owner@example.test"}
+	c := config.Config{PublicURL: "https://porter.test", LandingURL: "https://porter.test/app", Database: filepath.Join(d, "source.db"), ProxyKey: strings.Repeat("p", 32), StargateURL: upstream.URL + "/_auth", StargateSecret: strings.Repeat("s", 32), Providers: map[string]config.Provider{"github": {ClientID: "app", ClientSecret: "SECRET"}}, Bindings: []config.Binding{binding}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(c.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, browser := strings.Repeat("T", 43), strings.Repeat("B", 43)
+	expiry := time.Now().Add(time.Hour)
+	if err = db.Start("pending", browser, "", store.Record{Provider: "github", Expires: expiry}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.RotateSession(token, "", store.Record{Provider: "github", Namespace: "app", Subject: "subject", UserID: "u1", Binding: binding.Revision(), Browser: store.Key(browser), Expires: expiry}); err != nil {
+		t.Fatal(err)
+	}
+	checkGateway := func(s *store.Store, status int) {
+		t.Helper()
+		g := gateway.New(c, s, nil)
+		defer g.CloseIdleConnections()
+		for _, route := range []string{"/identity", "/auth"} {
+			req := httptest.NewRequest("GET", c.PublicURL+route, nil)
+			req.AddCookie(&http.Cookie{Name: "__Host-porter_session", Value: token})
+			req.Header.Set("Authorization", "Bearer "+c.ProxyKey)
+			req.Header.Set("X-User-Mail", "attacker@example.test")
+			req.Header.Set("X-Stargate-Header-Auth", "attacker")
+			req.Header.Set("X-Forwarded-Uri", "/app")
+			req.Header.Set("X-Forwarded-Method", "GET")
+			req.Header.Set("X-Forwarded-Host", "porter.test")
+			req.Header.Set("X-Forwarded-Proto", "https")
+			response := httptest.NewRecorder()
+			g.Handler().ServeHTTP(response, req)
+			if response.Code != status || response.Header().Get("Set-Cookie") != "" {
+				t.Fatal("unexpected proxy response", route, response.Code)
+			}
+		}
+	}
+	checkGateway(db, 200)
+	db.Close()
+	snapshot, output := filepath.Join(d, "snapshot.db"), filepath.Join(d, "recovered.db")
+	sum, err := operate("backup", c.Database, snapshot, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err = store.Open(c.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Revoke(token, browser); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err = operate("restore", snapshot, output, sum, true); err != nil {
+		t.Fatal(err)
+	}
+	damageNewestMeta(t, output)
 	recovered, err := store.Open(output)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer recovered.Close()
-	if _, err = recovered.Session("session-SECRET"); !errors.Is(err, store.ErrMissing) {
-		t.Fatal("meta fallback revived snapshot session", err)
-	}
-	if _, err = recovered.Consume("state-SECRET", "browser-SECRET", "github"); !errors.Is(err, store.ErrMissing) {
-		t.Fatal("meta fallback revived pending callback", err)
+	checkGateway(recovered, 401)
+	if hits.Load() != 1 {
+		t.Fatal("recovered snapshot delegated revoked identity to Stargate")
 	}
 }
