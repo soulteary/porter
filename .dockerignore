@@ -16,3 +16,10 @@
 !tests/operations/**
 !tests/contracts/
 !tests/contracts/**
+!tests/fixture/
+!tests/fixture/**
+!tools/
+!tools/recovery/
+!tools/recovery/**
+!tests/linux/
+!tests/linux/**

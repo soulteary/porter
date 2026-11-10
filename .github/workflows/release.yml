@@ -37,8 +37,10 @@ jobs:
     uses: ./.github/workflows/security-fuzz.yml
   service-contracts:
     uses: ./.github/workflows/service-contracts.yml
+  linux-recovery:
+    uses: ./.github/workflows/linux-recovery.yml
   publish:
-    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention, protocol-session, service-contracts]
+    needs: [release-policy, supply-chain, compatibility, authentication, monitoring, retention, protocol-session, service-contracts, linux-recovery]
     runs-on: ubuntu-24.04
     environment: release
     timeout-minutes: 30

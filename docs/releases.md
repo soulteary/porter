@@ -25,14 +25,18 @@ step checks upstream release checksums. Vulnerability data intentionally refresh
 
 Before the first release, a repository administrator must configure the `release`
 environment with required reviewers, restrict release tag creation/movement using
-repository rulesets, and grant the workflow access to the GHCR package. The
-workflow checks that a required-reviewer policy exists and refuses publication
-otherwise. These repository settings are not provisioned by this change.
+repository rulesets, and grant the workflow access to the GHCR package. Use the explicit operator plan/apply/check procedure in `release-controls.md`.
+The workflow verifies the public reviewer, tag deployment and ruleset policy
+with a read-only token; an administrator performs the full bypass-actor check
+before creating a tag. The configured single-maintainer approval is not an
+independent two-person review.
 
 Create a version tag such as `v0.2.0` only after reviewing and merging its commit.
 Tag pushes run supply-chain verification for both native architectures, the full
 Go/browser/Nginx authentication checks, monitoring rules, audit retention and the
-production baseline upgrade/rollback suite. Publishing waits for these jobs and
+production baseline upgrade/rollback suite, protocol/session fuzzing, real
+Porter/Stargate/Warden contracts and Linux recovery acceptance. Publishing waits
+for all nine required jobs and
 the protected environment. The tag must name a main ancestor and match the
 workflow's version pattern. Only the publishing job gets package-write,
 attestation-write and OIDC permissions. No cloud or production credentials are
@@ -56,8 +60,8 @@ Registry errors fail the job; a late error during promotion or its final digest
 check may leave a version tag present without a successful release. A failed attempt can leave an unpromoted candidate and origin
 attestation in GHCR; neither means the vulnerability gate passed. No `latest` tag
 or automatic deployment is produced. Only a completed successful release summary
-is a deployment reference. The environment-policy job has only Actions read
-permission for the environment API; publishing write/OIDC grants remain isolated.
+is a deployment reference. The environment-policy job has only Actions read and contents read
+permissions; publishing write/OIDC grants remain isolated.
 
 `python3 -m unittest discover -s tests/release -v` checks the actual promotion
 helper's failure paths with mocked external commands: either platform failing,

@@ -38,10 +38,30 @@ func main() {
 	switch os.Args[1] {
 	case "unsafe-audit":
 		must(os.Chmod(dir+"/audit.jsonl", 0644))
+	case "verify-recovered":
+		c := load()
+		db, err := store.Open(c.Database)
+		must(err)
+		defer db.Close()
+		for _, token := range []string{"L", "C", "R", "E"} {
+			if _, err := db.Session(strings.Repeat(token, 43)); !errors.Is(err, store.ErrMissing) {
+				panic("restored session remained valid")
+			}
+		}
+		for _, pair := range [][2]string{{"P", "B"}, {"Q", "D"}} {
+			if _, err := db.Consume(strings.Repeat(pair[0], 43), strings.Repeat(pair[1], 43), "github"); !errors.Is(err, store.ErrMissing) {
+				panic("restored transaction remained valid")
+			}
+		}
+	case "prepare-directory":
+		must(os.Chown(dir, 65532, 65532))
+		must(os.Chmod(dir, 0700))
 	case "seed":
 		seed()
 	case "arm-expiry":
-		armExpiry()
+		armExpiry(20 * time.Second)
+	case "arm-recovery-session":
+		armExpiry(time.Hour)
 	case "verify-candidate":
 		verify("P", "B")
 	case "verify":
@@ -92,12 +112,12 @@ func seed() {
 	write(dir+"/expected.json", expires)
 	fmt.Println("baseline fixture created")
 }
-func armExpiry() {
+func armExpiry(lifetime time.Duration) {
 	c := load()
 	db, err := store.Open(c.Database)
 	must(err)
 	defer db.Close()
-	expires := time.Now().UTC().Add(20 * time.Second)
+	expires := time.Now().UTC().Add(lifetime)
 	state, browser := strings.Repeat("S", 43), strings.Repeat("T", 43)
 	record := store.Record{Expires: expires, Provider: "github", Namespace: "app", Subject: "subject", UserID: "u1", Binding: c.Bindings[0].Revision()}
 	must(db.Start(state, browser, "", record))

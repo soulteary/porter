@@ -1,0 +1,62 @@
+# Linux recovery acceptance
+
+`tests/linux.py` runs a bounded synthetic workload and the offline recovery tool
+against the production image. Run only on an authorized Linux Docker host with
+capacity for a 0.5 CPU / 256 MiB candidate. Test helpers have the same limits.
+No real provider application, production database or production key is needed.
+
+Build the three images as shown in `.github/workflows/linux-recovery.yml`, then run:
+
+```sh
+python3 tests/linux.py --porter-image porter-linux:candidate \
+  --fixture-image porter-linux:fixture --recovery-image porter-linux:recovery \
+  --evidence linux-evidence.json
+```
+
+The harness creates randomly named volumes and containers. The candidate and
+bounded HTTP peer use a dedicated internal network with no provider egress. No HTTP or management port is published. The peer measures
+latency inside that network; Docker CLI startup is outside each timed sample.
+Cleanup removes only resources created by the run;
+prebuilt images are retained for the operator. The fixture and recovery binaries
+are separate images and are never added to the production image.
+
+The workload offers 10 identity reads per second for 20 seconds with four workers.
+The evidence records successful request latency percentiles, startup readiness and
+backup/restore command durations. These measurements are an initial host-specific
+baseline, not a throughput limit, incident RTO or RPO commitment. Set operational
+objectives from representative workloads and the actual backup schedule.
+
+A snapshot is taken with Porter stopped. A session is then revoked in the source,
+after which the older snapshot is restored into a new private volume. Every old
+session and pending transaction must be invalid; an HTTP callback carrying its
+original transaction cookie must fail. A newly seeded one-hour synthetic session is accepted,
+logged out, and remains invalid after restart. Its deadline must still be in the
+future after that check; natural expiration cannot satisfy the revocation test. Restore deliberately requires users
+to sign in again. Runtime authentication and provider exchange code are unchanged. The release
+publishing job requires this Linux acceptance workflow.
+
+For a shared host, capture the IDs and health of the existing application containers
+before and after the run. Do not restart them, attach their networks, mount their
+volumes, reuse their keys or modify proxy routing. Transfer prebuilt native images
+when compiling on the host would create unwanted load. Keep evidence free of
+cookies, tokens, database pages and application configuration. CI retains the
+sanitized JSON for 14 days; retain operator evidence under the site's own policy.
+
+Live provider authorization, browser redirect/QR behavior, complete incident
+response timing and production workload capacity are outside this synthetic drill.
+
+## Recorded target-host run
+
+The [2026-11-10 ARM64 evidence](evidence/linux-arm64-2026-11-10.json) records
+200 successful reads at 10 offered QPS: p50 25.133 ms, p95 35.979 ms and
+p99 39.337 ms. Backup and restore commands took 0.342 s and 0.314 s;
+restored readiness took 0.371 s. The existing application containers retained
+their IDs and health across the drill. These are single-run observations on a
+shared host under the stated container limits, not service-level objectives.
+
+The [review rerun](evidence/linux-arm64-review-2026-11-10.json) uses the internal
+Go peer without publishing ports. It confirms that the fresh session's deadline
+is still in the future after logout/restart, and that old snapshot sessions and
+callbacks remain invalid. The earlier host-client latency numbers above include
+a different measurement path and must not be directly compared with this peer's
+network-local samples. Both are bounded synthetic observations, not capacity SLAs.
