@@ -93,6 +93,12 @@ func operate(command, source, destination, expected string, stopped bool) (strin
 		if err != nil || len(decoded) != sha256.Size {
 			return "", refused
 		}
+		// Reject damaged snapshots before bbolt parses their page structure.
+		// The copied bytes are hashed again under the lock before publication.
+		actual, err := digest(source)
+		if err != nil || actual != expected {
+			return "", refused
+		}
 	}
 	// Read-only bbolt holds a shared lock for the entire copy. A live Porter holds
 	// an exclusive lock, so a running writer cannot be copied as a plain file.
