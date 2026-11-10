@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0
-	github.com/go-jose/go-jose/v4 v4.1.3
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/prometheus/client_golang v1.25.0
 	github.com/soulteary/audit-kit/v2 v2.1.4
 	github.com/soulteary/cli-kit v1.9.3
