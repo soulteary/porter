@@ -3,6 +3,7 @@
 import json
 import ipaddress
 import datetime
+import re
 import pathlib
 import subprocess
 import time
@@ -67,7 +68,7 @@ def main():
             return False
         groups = json.loads(result['body'])['data']['groups']
         return any(group['name'] == 'porter' and
-                   datetime.datetime.fromisoformat(group['lastEvaluation'].replace('Z', '+00:00')).timestamp() > timestamp
+                   datetime.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', group['lastEvaluation']).replace('Z', '+00:00')).timestamp() > timestamp
                    for group in groups)
 
     def sidecars():
