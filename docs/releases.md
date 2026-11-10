@@ -71,3 +71,13 @@ Local validation: `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`,
 scanner/database access and package attestation are tested by their workflow
 stages. This change does not publish a version or claim those release-only stages
 have already been exercised with production publishing permissions.
+
+The first scan identified two upstream go-jose advisories in v4.1.3:
+[GHSA-mgcc-cww5-fp2q](https://github.com/go-jose/go-jose/security/advisories/GHSA-mgcc-cww5-fp2q)
+(JWK parsing denial of service) and
+[GHSA-78h2-9frx-2jm8](https://github.com/go-jose/go-jose/security/advisories/GHSA-78h2-9frx-2jm8)
+(JWE decryption panic). The dependency is patched to v4.1.6. Porter uses JWK/JWS
+verification for Google OIDC and does not add a JWE login flow. The upstream
+4096-bit RSA JWK parsing limit is retained; larger keys are rejected, not granted
+a custom exception. Existing signed-token issuer/audience/nonce/signature tests
+and all four single-attempt exchange tests remain required.
