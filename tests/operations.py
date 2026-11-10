@@ -71,7 +71,7 @@ def main():
 
     def remove_sidecars():
         for name in (prometheus, blackbox):
-            docker('rm', '-f', name)
+            docker('rm', '-f', '-v', name)
             containers.remove(name)
 
     try:
@@ -178,7 +178,7 @@ def main():
         raise
     finally:
         for name in reversed(containers):
-            subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['docker', 'rm', '-f', '-v', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for name in volumes:
             subprocess.run(['docker', 'volume', 'rm', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for name in networks:
