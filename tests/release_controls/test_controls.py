@@ -48,6 +48,29 @@ class Controls(unittest.TestCase):
         controls.execute(POLICY, True, server)
         self.assertEqual(len(server.writes), 3)
 
+    def test_read_only_ruleset_response_omits_bypass_actors(self):
+        server = Server()
+        controls.execute(POLICY, True, server)
+        server.writes.clear()
+        server.rules[0].pop('bypass_actors')
+        with self.assertRaises(controls.Refused):
+            controls.execute(POLICY, request=server)
+        result = controls.execute(POLICY, request=server, public_rules=True)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['ruleset_bypass_verification'], 'operator_check_required')
+        with self.assertRaises(controls.Refused):
+            controls.execute(POLICY, True, server, public_rules=True)
+        for field, value in (('enforcement', 'disabled'), ('conditions', {}), ('rules', [])):
+            original = server.rules[0][field]
+            server.rules[0][field] = value
+            with self.assertRaises(controls.Refused):
+                controls.execute(POLICY, request=server, public_rules=True)
+            server.rules[0][field] = original
+        server.rules[0]['bypass_actors'] = []
+        with self.assertRaises(controls.Refused):
+            controls.execute(POLICY, request=server, public_rules=True)
+        self.assertEqual(server.writes, [])
+
     def test_conflicts_are_rejected_before_any_mutation(self):
         for scenario in ('reviewer', 'branch', 'ruleset', 'identity'):
             with self.subTest(scenario=scenario):

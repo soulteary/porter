@@ -50,7 +50,7 @@ def desired(policy):
     return repository, environment, ruleset
 
 
-def plan(policy, request=api):
+def plan(policy, request=api, *, public_rules=False):
     repository, environment, ruleset = desired(policy)
     root = 'repos/' + repository
     for reviewer in policy['reviewers']:
@@ -89,6 +89,10 @@ def plan(policy, request=api):
         current_rule['rules'] = sorted(current_rule.get('rules', []), key=lambda rule: rule['type'])
         expected_rule = dict(ruleset)
         expected_rule['rules'] = sorted(ruleset['rules'], key=lambda rule: rule['type'])
+        # GitHub omits bypass actors for tokens without ruleset write access.
+        # Read-only CI verifies public enforcement; operators check the full policy.
+        if public_rules and 'bypass_actors' not in current_rule:
+            expected_rule.pop('bypass_actors')
         if any(current_rule.get(key) != value for key, value in expected_rule.items()):
             raise Refused('existing managed tag rules differ; refusing to overwrite them')
     else:
@@ -96,8 +100,10 @@ def plan(policy, request=api):
     return changes
 
 
-def execute(policy, apply=False, request=api):
-    changes = plan(policy, request)
+def execute(policy, apply=False, request=api, *, public_rules=False):
+    if apply and public_rules:
+        raise Refused('public policy checking cannot apply changes')
+    changes = plan(policy, request, public_rules=public_rules)
     if apply:
         # All reads and conflict checks complete before the first mutation.
         for method, route, body in changes:
@@ -105,6 +111,7 @@ def execute(policy, apply=False, request=api):
         if plan(policy, request):
             raise Refused('release controls did not converge; inspect partial changes')
     return {'ok': not changes or apply, 'applied': bool(apply and changes),
+            'ruleset_bypass_verification': 'operator_check_required' if public_rules else 'full_policy',
             'planned_requests': [{'method': method, 'route': route, 'body': body} for method, route, body in changes]}
 
 
@@ -115,15 +122,16 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--apply', action='store_true')
     modes.add_argument('--check', action='store_true')
+    modes.add_argument('--check-public', action='store_true', help='read-only enforcement check; hidden bypass actors require an operator check')
     args = parser.parse_args()
     try:
         policy = json.loads(args.policy.read_text())
         repository, _, _ = desired(policy)
         if args.expected_repository and args.expected_repository.lower() != repository.lower():
             raise Refused('policy repository does not match the workflow repository')
-        result = execute(policy, args.apply)
+        result = execute(policy, args.apply, public_rules=args.check_public)
         print(json.dumps(result, indent=2))
-        if args.check and not result['ok']:
+        if (args.check or args.check_public) and not result['ok']:
             raise SystemExit(1)
     except (Refused, ValueError, OSError) as error:
         parser.exit(1, 'release controls refused: ' + (str(error) if isinstance(error, Refused) else 'invalid policy or file access') + '\n')

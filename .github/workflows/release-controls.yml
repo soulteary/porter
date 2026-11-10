@@ -5,6 +5,7 @@ on:
     branches: [main]
 permissions:
   contents: read
+  actions: read
 jobs:
   policy:
     runs-on: ubuntu-24.04
@@ -13,3 +14,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests/release_controls -v
+      - name: Verify public release policy with the read-only workflow token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release-controls.py --check-public --expected-repository "$GITHUB_REPOSITORY"

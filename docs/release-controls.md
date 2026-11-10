@@ -29,8 +29,15 @@ leave partial controls, and the operator must inspect and rerun check. Serialize
 administrative changes; concurrent environment/ruleset writers are unsupported.
 Inventories over one 100-item page are refused instead of silently ignoring rules.
 
-The release policy job checks these controls read-only and verifies that the
-policy belongs to the workflow repository. Publishing still requires the protected
+The release policy job uses `--check-public` with its read-only workflow token.
+It checks the reviewer/environment policy and public ruleset enforcement, and
+verifies that the policy belongs to the workflow repository. GitHub hides
+[bypass actors from callers without ruleset write access](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset).
+This mode explicitly reports that operator bypass verification is required; it
+cannot apply changes and does not claim to inspect hidden bypass actors. Visible
+bypass actors must still match the policy. Before creating a release tag, the
+operator must run the full `--check` with administration access. The PR workflow
+also exercises the public check with its actual read-only token. Publishing still requires the protected
 environment, main ancestry, all acceptance workflows and exact-digest image
 scanning/provenance verification. Neither this operator tool nor PR CI creates
 Git tags, approves deployments, publishes packages or changes runtime credentials.
@@ -42,7 +49,7 @@ Record the tag/version and previous compatible image, and use a new candidate
 version rather than moving an existing tag. A real candidate release is a separate
 operator action after reviewing those concrete inputs:
 
-1. Create the selected signed tag at the reviewed main commit and push that tag.
+1. Run the full operator `--check`, including bypass actors. Create the selected signed tag at the reviewed main commit and push that tag.
 2. Wait for the read-only release gates. Inspect their source commit, both native
    platforms, compatibility and no-retry authentication results.
 3. Manually review the pending `release` environment deployment in GitHub.

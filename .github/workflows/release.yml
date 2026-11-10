@@ -22,7 +22,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 tools/release-controls.py --check --expected-repository "$GITHUB_REPOSITORY"
+          python3 tools/release-controls.py --check-public --expected-repository "$GITHUB_REPOSITORY"
   supply-chain:
     uses: ./.github/workflows/supply-chain.yml
   compatibility:
