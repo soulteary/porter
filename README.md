@@ -17,7 +17,7 @@ A successful Porter login is not a Warden authorization decision.
 
 ## Run
 
-Go 1.27.3 or later is required.
+Go 1.27.4 or later is required.
 
 1. Register an application with each provider you intend to enable.
 2. Copy `examples/porter.example.json` to a private configuration file.
