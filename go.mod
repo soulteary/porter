@@ -3,7 +3,7 @@ module github.com/soulteary/porter
 go 1.27.4
 
 require (
-	github.com/coreos/go-oidc/v3 v3.17.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/prometheus/client_golang v1.25.0
 	github.com/soulteary/audit-kit/v2 v2.1.6
