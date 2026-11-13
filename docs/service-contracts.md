@@ -2,7 +2,7 @@
 
 Run `python3 tests/contracts.py --evidence service-contracts.json` on a Docker host.
 The harness builds Porter's production image and a separate test peer, then runs
-real Stargate 1.3.6 and Warden 1.6.3 images pinned by multi-platform digest. It uses
+real Stargate 1.3.8 and Warden 1.7.0 images pinned by multi-platform digest. It uses
 synthetic bindings, directory users and session records. No provider application
 or production configuration is loaded.
 
@@ -48,3 +48,6 @@ passed complete response-header inventory, independent proxy/session credential
 requirements and invalid forwarded-context denial. Existing application IDs and
 health were unchanged. The report contains check names and image identities,
 without request credentials or response header values.
+
+Both dated runs used Stargate 1.3.6 and Warden 1.6.3, as recorded in the evidence
+files. No target-host run has been recorded for the currently pinned images.

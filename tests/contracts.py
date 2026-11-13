@@ -9,8 +9,8 @@ import time
 import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-STARGATE = 'ghcr.io/soulteary/stargate:1.3.6@sha256:51a5f7b854509f7f6a284ec3ffed9c4f8c787967e84679018fa8a6437819a0a4'
-WARDEN = 'ghcr.io/soulteary/warden:1.6.3@sha256:9ac7db4184d922ddaadfa99f9e65a59e88641f08181f6eab83a57c19a9e3234c'
+STARGATE = 'ghcr.io/soulteary/stargate:1.3.8@sha256:0e05276f5313acdcfad1dd3b235e0bd429849ce5691e55b5f0b27575a27442aa'
+WARDEN = 'ghcr.io/soulteary/warden:1.7.0@sha256:48d16b9541e3c9692b89ff89eeb011567da629fa7fd3bebda97eac3def8ba1a9'
 
 
 AUTH_HEADERS = {'x-auth-user', 'x-forwarded-user', 'x-auth-email', 'x-auth-phone', 'x-auth-name', 'x-auth-role', 'x-auth-scopes'}
