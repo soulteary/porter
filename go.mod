@@ -15,7 +15,7 @@ require (
 	github.com/soulteary/preflight-kit v1.0.3
 	github.com/soulteary/version-kit/v4 v4.0.5
 	go.etcd.io/bbolt v1.5.0
-	golang.org/x/oauth2 v0.37.0
+	golang.org/x/oauth2 v0.38.0
 )
 
 require (
