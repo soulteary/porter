@@ -148,7 +148,7 @@ func serve(ctx context.Context, c config.Config, info *versionkit.Info, logs io.
 			return errors.New("provider initialization failed")
 		}
 		adapters[name] = a
-		defer a.(*provider.OAuth).CloseIdleConnections()
+		defer a.(interface{ CloseIdleConnections() }).CloseIdleConnections()
 	}
 	publicListener, e := net.Listen("tcp", c.Listen)
 	if e != nil {

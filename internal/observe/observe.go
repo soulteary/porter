@@ -103,7 +103,7 @@ func classify(path string) (string, string, string) {
 	for _, prefix := range []string{"/login/", "/callback/"} {
 		if name, ok := strings.CutPrefix(path, prefix); ok {
 			switch name {
-			case "github", "google", "wechat", "qq":
+			case "github", "google", "wechat", "qq", "dingtalk":
 				action := "login_start"
 				if prefix == "/callback/" {
 					action = "login_callback"
