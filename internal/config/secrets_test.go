@@ -52,7 +52,7 @@ func TestFileSecretsMatchInlineConfiguration(t *testing.T) {
 	secretFile(t, dir, "management", c.Operations.Key, 0440)
 	c.Operations.KeyFile = "management"
 	c.Operations.Key = ""
-	for _, name := range []string{"github", "google", "wechat", "qq"} {
+	for _, name := range []string{"github", "google", "wechat", "qq", "dingtalk"} {
 		c.Providers[name] = Provider{ClientID: "app", ClientSecretFile: name + "-secret"}
 		secretFile(t, dir, name+"-secret", "provider-secret", 0400)
 	}
