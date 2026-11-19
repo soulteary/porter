@@ -1,7 +1,7 @@
 # Porter
 
 Porter is an external identity gateway written in Go. It supports GitHub OAuth,
-Google OpenID Connect, WeChat website QR login, and QQ website login.
+Google OpenID Connect, WeChat website QR login, QQ website login, and DingTalk browser QR authorization.
 
 Porter owns upstream authentication and its browser sessions. It exports a
 configured internal identity to a trusted reverse proxy, or delegates authorization
@@ -61,6 +61,7 @@ provider client ID. Subjects are opaque and case-sensitive:
 | GitHub | Numeric user ID, not login name | Authorization code with S256 PKCE; authenticated `/user` lookup |
 | Google | Verified ID token `sub` | OIDC authorization code with S256 PKCE and nonce |
 | WeChat | Website application's `openid` | `snsapi_login` QR authorization and server-side code exchange |
+| DingTalk | Application-scoped `openId` | JSON code exchange and authenticated user information lookup |
 | QQ | Application's `openid` | Authorization code, token exchange, `/me` with matching client ID |
 
 Do not obtain subjects by accepting an unverified browser claim. Provision mappings
@@ -78,7 +79,7 @@ identity; downstream apps must use `/auth` and Stargate's authorization headers.
 ## HTTP API
 
 - `GET /login`: provider selection and logout form.
-- `POST /login/{github|google|wechat|qq}`: start a login. Requires the exact public
+- `POST /login/{github|google|wechat|qq|dingtalk}`: start a login. Requires the exact public
   `Origin`; creates a five-minute browser-bound transaction. One outstanding login
   per browser is supported; starting again revokes the previous pending login.
   A 200 HTML response navigates separately to the provider, keeping external
@@ -382,3 +383,5 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 Offline database backup, session-invalidating recovery and verification are described in
 [backup-recovery.md](docs/backup-recovery.md).
+
+DingTalk setup and acceptance: [DingTalk login](docs/dingtalk.md).

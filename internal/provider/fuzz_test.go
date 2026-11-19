@@ -21,8 +21,8 @@ func (rejectingFuzzKeySet) VerifySignature(context.Context, string) ([]byte, err
 }
 
 func FuzzProviderResponseSingleExchange(f *testing.F) {
-	for i := uint8(0); i < 4; i++ {
-		for _, body := range []string{`{}`, `not-json`, `{"access_token":"token","token_type":"Bearer","openid":"subject","client_id":"app","id":123}`, `{"access_token":"token","token_type":"Bearer","id_token":"unsigned.invalid.token"}`, `{"error":"fixture-SECRET"}`} {
+	for i := uint8(0); i < 5; i++ {
+		for _, body := range []string{`{}`, `{"accessToken":"token","openId":"subject"}`, `not-json`, `{"access_token":"token","token_type":"Bearer","openid":"subject","client_id":"app","id":123}`, `{"access_token":"token","token_type":"Bearer","id_token":"unsigned.invalid.token"}`, `{"error":"fixture-SECRET"}`} {
 			f.Add(i, uint16(200), []byte(body))
 		}
 		f.Add(i, uint16(401), []byte(`{"error":"invalid_client"}`))
@@ -31,7 +31,7 @@ func FuzzProviderResponseSingleExchange(f *testing.F) {
 		if len(body) > 1<<20 || status < 100 || status > 599 {
 			t.Skip()
 		}
-		name := []string{"github", "google", "wechat", "qq"}[index%4]
+		name := []string{"github", "google", "wechat", "qq", "dingtalk"}[index%5]
 		exchanges := 0
 		client := &http.Client{Timeout: time.Second, Transport: transportFunc(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Host != "fixture.invalid" {
@@ -43,7 +43,11 @@ func FuzzProviderResponseSingleExchange(f *testing.F) {
 			return &http.Response{StatusCode: int(status), Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: req}, nil
 		})}
 		a := &OAuth{Name: name, Client: client, ExchangeClient: client, identityURL: "https://fixture.invalid/user", Config: oauth2.Config{ClientID: "app", ClientSecret: "fixture-SECRET", Endpoint: oauth2.Endpoint{TokenURL: "https://fixture.invalid/token", AuthStyle: oauth2.AuthStyleAutoDetect}}, Verifier: oidc.NewVerifier("https://accounts.google.com", rejectingFuzzKeySet{}, &oidc.Config{ClientID: "app", SupportedSigningAlgs: []string{oidc.RS256}})}
-		identity, err := a.Exchange(context.Background(), "fixture-CODE", "verifier", "nonce")
+		var adapter Adapter = a
+		if name == "dingtalk" {
+			adapter = &DingTalk{clientID: "app", secret: "fixture-SECRET", client: client, tokenURL: "https://fixture.invalid/token", userURL: "https://fixture.invalid/user"}
+		}
+		identity, err := adapter.Exchange(context.Background(), "fixture-CODE", "verifier", "nonce")
 		if exchanges != 1 {
 			t.Fatal("one-use code exchange was not single attempt", exchanges)
 		}
