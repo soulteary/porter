@@ -171,7 +171,9 @@ func TestNginxTrustBoundary(t *testing.T) {
 			before := businessHits.Load()
 			r, _ := http.NewRequest(tc.method, "https://"+address+tc.path, nil)
 			r.Host = "login.example.com"
-			r.AddCookie(&http.Cookie{Name: g.cookieName("session"), Value: token})
+			if !strings.HasPrefix(tc.name, "DingTalk") {
+				r.AddCookie(&http.Cookie{Name: g.cookieName("session"), Value: token})
+			}
 			for _, name := range []string{"X-Auth-User", "X-Forwarded-User", "X-Auth-Role", "X-User-Mail", "X-Porter-User-ID", "Authorization", "X-Stargate-Header-Auth", "Stargate-Password", "X-Forwarded-Uri", "X-Forwarded-Method", "X-Forwarded-Host", "X-Forwarded-Proto"} {
 				r.Header.Set(name, "attacker")
 			}

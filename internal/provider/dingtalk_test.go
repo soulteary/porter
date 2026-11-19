@@ -102,3 +102,22 @@ func TestDingTalkSingleAttempt(t *testing.T) {
 		})
 	}
 }
+
+func TestDingTalkMalformedCodesNeverReachUpstream(t *testing.T) {
+	var hits atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer s.Close()
+	c := outbound.New(time.Second)
+	defer c.CloseIdleConnections()
+	a := newDingTalk("app", "SECRET", "https://porter.test/callback/dingtalk", c)
+	defer a.CloseIdleConnections()
+	a.tokenURL = s.URL
+	for _, code := range []string{"", " CODE", "CODE ", "CODE\n", strings.Repeat("x", 4097)} {
+		if _, err := a.Exchange(context.Background(), code, "", ""); err == nil {
+			t.Fatal("malformed code accepted")
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatal("malformed code reached upstream")
+	}
+}

@@ -21,7 +21,7 @@ func (a *dingFake) Exchange(context.Context, string, string, string) (provider.I
 	return provider.Identity{Provider: "dingtalk", Namespace: "app", Subject: "123"}, nil
 }
 func TestDingTalkCallbackIsolation(t *testing.T) {
-	for _, query := range []string{"authCode=CODE", "code=CODE", "authCode=CODE&code=CODE", "authCode=A&authCode=B", "error=access_denied", "authCode="} {
+	for _, query := range []string{"authCode=CODE", "code=CODE", "authCode=CODE&code=CODE", "authCode=A&authCode=B", "error=access_denied", "authCode=", "authCode=%20CODE", "authCode=CODE%0A", "authCode=CODE&code=", "authCode=CODE&authCode="} {
 		t.Run(query, func(t *testing.T) {
 			g, _ := fixture(t)
 			defer g.CloseIdleConnections()

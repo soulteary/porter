@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/soulteary/porter/internal/config"
 	"github.com/soulteary/porter/internal/observe"
@@ -229,7 +230,8 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login configuration changed", http.StatusBadRequest)
 		return
 	}
-	if q.Get("error") != "" || q.Get(codeKey) == "" || len(q.Get(codeKey)) > 4096 {
+	invalidDingTalkCode := name == "dingtalk" && (strings.TrimSpace(q.Get(codeKey)) != q.Get(codeKey) || strings.IndexFunc(q.Get(codeKey), unicode.IsControl) >= 0)
+	if invalidDingTalkCode || q.Get("error") != "" || q.Get(codeKey) == "" || len(q.Get(codeKey)) > 4096 {
 		http.Error(w, "authorization was not completed", http.StatusBadRequest)
 		return
 	}
