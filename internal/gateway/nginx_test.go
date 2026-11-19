@@ -162,6 +162,8 @@ func TestNginxTrustBoundary(t *testing.T) {
 		{"original POST policy", "POST", "/sensitive?tab=one", 0, 403},
 		{"reassigned contact", "GET", "/app?tab=one", 2, 403},
 		{"directory unavailable", "GET", "/app?tab=one", 1, 500},
+		{"DingTalk callback reaches public gateway", "GET", "/callback/dingtalk", 0, 404},
+		{"DingTalk login reaches public gateway", "GET", "/login/dingtalk", 0, 405},
 		{"private subrequest", "GET", "/_access", 0, 404},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
