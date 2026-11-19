@@ -19,7 +19,7 @@ import (
 type browserAdapter struct{ name string }
 
 func (a browserAdapter) AuthorizationURL(state, _, _ string) string {
-	host := map[string]string{"github": "https://github.com/login/oauth/authorize", "google": "https://accounts.google.com/o/oauth2/v2/auth", "wechat": "https://open.weixin.qq.com/connect/qrconnect", "qq": "https://graph.qq.com/oauth2.0/authorize"}[a.name]
+	host := map[string]string{"github": "https://github.com/login/oauth/authorize", "google": "https://accounts.google.com/o/oauth2/v2/auth", "wechat": "https://open.weixin.qq.com/connect/qrconnect", "qq": "https://graph.qq.com/oauth2.0/authorize", "dingtalk": "https://login.dingtalk.com/oauth2/auth"}[a.name]
 	return host + "?state=" + state
 }
 func (a browserAdapter) Exchange(context.Context, string, string, string) (provider.Identity, error) {
@@ -41,7 +41,7 @@ func TestBrowserForms(t *testing.T) {
 	origin := "https://" + s.Listener.Addr().String()
 	c := config.Config{PublicURL: origin, LandingURL: origin + "/app", SessionSeconds: 3600, Providers: map[string]config.Provider{}, Bindings: []config.Binding{}}
 	adapters := map[string]provider.Adapter{}
-	for _, name := range []string{"github", "google", "wechat", "qq"} {
+	for _, name := range []string{"github", "google", "wechat", "qq", "dingtalk"} {
 		c.Providers[name] = config.Provider{ClientID: "app-" + name}
 		c.Bindings = append(c.Bindings, config.Binding{Provider: name, Namespace: "app-" + name, Subject: "subject", UserID: "internal-1", Mail: "owner@example.test"})
 		adapters[name] = browserAdapter{name: name}

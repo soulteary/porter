@@ -60,11 +60,11 @@ try {
         const { requestId, request } = message.params;
         const url = new URL(request.url);
         const provider = ({ 'github.com': 'github', 'accounts.google.com': 'google',
-          'open.weixin.qq.com': 'wechat', 'graph.qq.com': 'qq' })[url.hostname];
+          'open.weixin.qq.com': 'wechat', 'graph.qq.com': 'qq', 'login.dingtalk.com': 'dingtalk' })[url.hostname];
         assert.ok(provider, 'Unexpected provider navigation');
         assert.ok(url.searchParams.get('state'), 'Missing browser transaction state');
         intercepted.push(provider);
-        const callback = `${origin}/callback/${provider}?state=${encodeURIComponent(url.searchParams.get('state'))}&code=browser-fixture`;
+        const callback = `${origin}/callback/${provider}?state=${encodeURIComponent(url.searchParams.get('state'))}&${provider === 'dingtalk' ? 'authCode' : 'code'}=browser-fixture`;
         await call('Fetch.fulfillRequest', { requestId, responseCode: 200,
           responseHeaders: [{ name: 'Content-Type', value: 'text/html' }, { name: 'Referrer-Policy', value: 'no-referrer' }],
           body: Buffer.from(`<meta http-equiv="refresh" content="0;url=${callback.replaceAll('&', '&amp;')}">`).toString('base64') });
@@ -73,7 +73,7 @@ try {
   };
   await call('Page.enable'); await call('Runtime.enable'); await call('Network.enable');
   await call('Fetch.enable', { patterns: ['https://github.com/login/oauth/authorize*', 'https://accounts.google.com/o/oauth2/v2/auth*',
-    'https://open.weixin.qq.com/connect/qrconnect*', 'https://graph.qq.com/oauth2.0/authorize*']
+    'https://open.weixin.qq.com/connect/qrconnect*', 'https://graph.qq.com/oauth2.0/authorize*', 'https://login.dingtalk.com/oauth2/auth*']
     .map(urlPattern => ({ urlPattern, requestStage: 'Request' })) });
   function navigationRace(error) {
     return /"code":-32000/.test(error.message) &&
@@ -97,7 +97,7 @@ try {
     await call('Page.navigate', { url: `${origin}/login` });
     await waitFor(() => evaluate(`location.pathname === '/login' && !!document.querySelector('form[action="/logout"]')`), 'login page');
   }
-  for (const provider of ['github', 'google', 'wechat', 'qq']) {
+  for (const provider of ['github', 'google', 'wechat', 'qq', 'dingtalk']) {
     await loginPage();
     // Submit the actual HTML form. Do not synthesize Origin or follow redirects
     // with an HTTP client: both miss browser Referrer-Policy/CSP enforcement.
@@ -116,7 +116,7 @@ try {
     await call('Page.navigate', { url: `${origin}/app` });
     await waitFor(() => evaluate(`document.body.textContent === 'Login required'`), 'session revoked');
   }
-  assert.deepEqual(intercepted, ['github', 'google', 'wechat', 'qq']);
+  assert.deepEqual(intercepted, ['github', 'google', 'wechat', 'qq', 'dingtalk']);
   console.log('PASS: Chromium HTML forms, four provider navigations, secure cookies, callbacks and logout');
 } finally {
   socket?.close();

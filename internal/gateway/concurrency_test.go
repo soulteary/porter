@@ -36,7 +36,7 @@ func (p *blockedExchange) Exchange(context.Context, string, string, string) (pro
 	return provider.Identity{Provider: p.name, Namespace: "app", Subject: "123"}, nil
 }
 func TestLogoutDuringExchangeSurvivesRestart(t *testing.T) {
-	for _, name := range []string{"github", "google", "wechat", "qq"} {
+	for _, name := range []string{"github", "google", "wechat", "qq", "dingtalk"} {
 		t.Run(name, func(t *testing.T) {
 			g, _ := fixture(t)
 			defer g.CloseIdleConnections()
@@ -64,7 +64,7 @@ func TestLogoutDuringExchangeSurvivesRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			browser := start.Result().Cookies()[0]
-			callback := "/callback/" + name + "?state=" + target.Query().Get("state") + "&code=SECRET"
+			callback := "/callback/" + name + "?state=" + target.Query().Get("state") + "&" + callbackCodeKey(name) + "=SECRET"
 			completed := make(chan *httptest.ResponseRecorder, 1)
 			go func() { completed <- request(g, "GET", callback, browser, "", "") }()
 			select {
@@ -114,7 +114,7 @@ func TestLogoutDuringExchangeSurvivesRestart(t *testing.T) {
 // All callbacks start together. Exactly one may consume the transaction, exchange
 // the code and issue a session; the winner must remain usable after reopening.
 func TestConcurrentCallbacksHaveSinglePersistentWinner(t *testing.T) {
-	for _, name := range []string{"github", "google", "wechat", "qq"} {
+	for _, name := range []string{"github", "google", "wechat", "qq", "dingtalk"} {
 		t.Run(name, func(t *testing.T) {
 			g, _ := fixture(t)
 			defer g.CloseIdleConnections()
@@ -150,7 +150,7 @@ func TestConcurrentCallbacksHaveSinglePersistentWinner(t *testing.T) {
 				go func() {
 					ready.Done()
 					<-barrier
-					responses <- request(g, "GET", "/callback/"+name+"?state="+state+"&code=SECRET", cookie, "", "")
+					responses <- request(g, "GET", "/callback/"+name+"?state="+state+"&"+callbackCodeKey(name)+"=SECRET", cookie, "", "")
 				}()
 			}
 			ready.Wait()
@@ -208,9 +208,16 @@ func TestConcurrentCallbacksHaveSinglePersistentWinner(t *testing.T) {
 			if result := request(g, "GET", "/identity", session, "", "Bearer "+g.cfg.ProxyKey); result.Code != http.StatusOK {
 				t.Fatal("winning session was not durable", result.Code)
 			}
-			if replay := request(g, "GET", "/callback/"+name+"?state="+state+"&code=SECRET", cookie, "", ""); replay.Code != 400 || p.calls.Load() != 1 {
+			if replay := request(g, "GET", "/callback/"+name+"?state="+state+"&"+callbackCodeKey(name)+"=SECRET", cookie, "", ""); replay.Code != 400 || p.calls.Load() != 1 {
 				t.Fatal("restart replayed exchange")
 			}
 		})
 	}
+}
+
+func callbackCodeKey(name string) string {
+	if name == "dingtalk" {
+		return "authCode"
+	}
+	return "code"
 }

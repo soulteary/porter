@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/soulteary/porter/internal/config"
 	"github.com/soulteary/porter/internal/provider"
@@ -30,7 +31,7 @@ func (a *callbackFuzzAdapter) Exchange(context.Context, string, string, string) 
 // Uses local adapters and disposable databases; never sends a code upstream.
 func FuzzCallbackSingleUse(f *testing.F) {
 	state, browser := strings.Repeat("S", 43), strings.Repeat("B", 43)
-	for index := uint8(0); index < 4; index++ {
+	for index := uint8(0); index < 5; index++ {
 		for _, query := range []string{
 			"state=" + state + "&code=code",
 			"state=" + state + "&code=one&code=two",
@@ -39,18 +40,32 @@ func FuzzCallbackSingleUse(f *testing.F) {
 			"state=%zz&code=code",
 			"state=" + state + "&code=" + strings.Repeat("x", 4097),
 		} {
+			if index == 4 {
+				query = strings.ReplaceAll(query, "code=", "authCode=")
+			}
 			f.Add(index, query, "__Host-porter_transaction="+browser)
 		}
-		f.Add(index, "state="+state+"&code=code", "__Host-porter_transaction=wrong-browser")
-		f.Add(index, "state="+state+"&code=code", "__Host-porter_transaction="+browser+"; __Host-porter_transaction="+browser)
-		f.Add(index, "state="+state+"&code=code", "__Host-porter_transaction=wrong-browser; __Host-porter_transaction="+browser)
+		seedQuery := "state=" + state + "&code=code"
+		if index == 4 {
+			seedQuery = "state=" + state + "&authCode=code"
+		}
+		f.Add(index, seedQuery, "__Host-porter_transaction=wrong-browser")
+		f.Add(index, seedQuery, "__Host-porter_transaction="+browser+"; __Host-porter_transaction="+browser)
+		f.Add(index, seedQuery, "__Host-porter_transaction=wrong-browser; __Host-porter_transaction="+browser)
+	}
+	for _, query := range []string{"code=CODE", "authCode=CODE&code=", "authCode=A&authCode=B", "authCode=%20CODE", "authCode=CODE%0A", "authCode=CODE"} {
+		f.Add(uint8(4), "state="+state+"&"+query, "__Host-porter_transaction="+browser)
 	}
 	f.Fuzz(func(t *testing.T, index uint8, query, cookie string) {
 		if len(query) > 32768 || len(cookie) > 1024 {
 			t.Skip()
 		}
 		g, _ := fixture(t)
-		name := []string{"github", "google", "wechat", "qq"}[index%4]
+		key, other := "code", "authCode"
+		if index%5 == 4 {
+			key, other = "authCode", "code"
+		}
+		name := []string{"github", "google", "wechat", "qq", "dingtalk"}[index%5]
 		adapter := &callbackFuzzAdapter{name: name}
 		g.providers = map[string]provider.Adapter{name: adapter}
 		g.cfg.Providers = map[string]config.Provider{name: {ClientID: "app", ClientSecret: "secret"}}
@@ -86,8 +101,9 @@ func FuzzCallbackSingleUse(f *testing.F) {
 			t.Fatal("callback replayed an authorization exchange")
 		}
 		parsed, err := url.ParseQuery(query)
-		_, mixed := parsed["authCode"]
-		eligible := !mixed && err == nil && bound && len(parsed["state"]) == 1 && parsed.Get("state") == state && len(parsed["code"]) == 1 && parsed.Get("code") != "" && len(parsed.Get("code")) <= 4096 && len(parsed["error"]) <= 1 && parsed.Get("error") == ""
+		_, mixed := parsed[other]
+		validCode := name != "dingtalk" || (strings.TrimSpace(parsed.Get(key)) == parsed.Get(key) && strings.IndexFunc(parsed.Get(key), unicode.IsControl) < 0)
+		eligible := validCode && !mixed && err == nil && bound && len(parsed["state"]) == 1 && parsed.Get("state") == state && len(parsed[key]) == 1 && parsed.Get(key) != "" && len(parsed.Get(key)) <= 4096 && len(parsed["error"]) <= 1 && parsed.Get("error") == ""
 		if eligible && (first.Code != 303 || adapter.calls != 1) {
 			t.Fatal("valid bound callback did not issue exactly one session")
 		}
