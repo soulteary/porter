@@ -33,6 +33,9 @@ func (a *DingTalk) AuthorizationURL(state, _, _ string) string {
 func (a *DingTalk) Exchange(ctx context.Context, code, _, _ string) (Identity, error) {
 	id := Identity{Provider: "dingtalk", Namespace: a.clientID}
 	failure := errors.New("DingTalk authentication failed")
+	if !dingValue(code) {
+		return id, failure
+	}
 	raw, _ := json.Marshal(map[string]string{"clientId": a.clientID, "clientSecret": a.secret, "code": code, "grantType": "authorization_code"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.tokenURL, bytes.NewReader(raw))
 	if err != nil {
