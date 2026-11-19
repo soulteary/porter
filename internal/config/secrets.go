@@ -43,7 +43,7 @@ func (c *Config) resolveSecrets(directory string) error {
 	}
 	// Unknown provider names are rejected by Validate; never interpolate them in
 	// errors or read file paths belonging to unsupported provider definitions.
-	for _, name := range []string{"github", "google", "wechat", "qq"} {
+	for _, name := range []string{"github", "google", "wechat", "qq", "dingtalk"} {
 		p, ok := c.Providers[name]
 		if !ok {
 			continue

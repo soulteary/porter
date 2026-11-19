@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/soulteary/porter/internal/config"
 	"github.com/soulteary/porter/internal/observe"
@@ -200,7 +201,12 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, e := url.ParseQuery(r.URL.RawQuery)
-	if e != nil || len(q["state"]) != 1 || len(q.Get("state")) != 43 || len(q["code"]) > 1 || len(q["error"]) > 1 {
+	codeKey, otherKey := "code", "authCode"
+	if name == "dingtalk" {
+		codeKey, otherKey = "authCode", "code"
+	}
+	_, mixed := q[otherKey]
+	if mixed || e != nil || len(q["state"]) != 1 || len(q.Get("state")) != 43 || len(q[codeKey]) > 1 || len(q["error"]) > 1 {
 		http.Error(w, "invalid callback", http.StatusBadRequest)
 		return
 	}
@@ -224,11 +230,12 @@ func (g *Gateway) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login configuration changed", http.StatusBadRequest)
 		return
 	}
-	if q.Get("error") != "" || q.Get("code") == "" || len(q.Get("code")) > 4096 {
+	invalidDingTalkCode := name == "dingtalk" && (strings.TrimSpace(q.Get(codeKey)) != q.Get(codeKey) || strings.IndexFunc(q.Get(codeKey), unicode.IsControl) >= 0)
+	if invalidDingTalkCode || q.Get("error") != "" || q.Get(codeKey) == "" || len(q.Get(codeKey)) > 4096 {
 		http.Error(w, "authorization was not completed", http.StatusBadRequest)
 		return
 	}
-	id, e := p.Exchange(r.Context(), q.Get("code"), tx.Verifier, tx.Nonce)
+	id, e := p.Exchange(r.Context(), q.Get(codeKey), tx.Verifier, tx.Nonce)
 	if e != nil {
 		observe.Detail(r, "provider_authentication_failed", "")
 		http.Error(w, "provider authentication failed", http.StatusBadGateway)

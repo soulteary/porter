@@ -157,7 +157,7 @@ func (c *Config) Validate() error {
 	}
 	for name, p := range c.Providers {
 		switch name {
-		case "github", "google", "wechat", "qq":
+		case "github", "google", "wechat", "qq", "dingtalk":
 		default:
 			return errors.New("unsupported provider name")
 		}

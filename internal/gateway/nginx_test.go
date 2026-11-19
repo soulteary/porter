@@ -162,6 +162,8 @@ func TestNginxTrustBoundary(t *testing.T) {
 		{"original POST policy", "POST", "/sensitive?tab=one", 0, 403},
 		{"reassigned contact", "GET", "/app?tab=one", 2, 403},
 		{"directory unavailable", "GET", "/app?tab=one", 1, 500},
+		{"DingTalk callback reaches public gateway", "GET", "/callback/dingtalk", 0, 404},
+		{"DingTalk login reaches public gateway", "GET", "/login/dingtalk", 0, 405},
 		{"private subrequest", "GET", "/_access", 0, 404},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,7 +171,9 @@ func TestNginxTrustBoundary(t *testing.T) {
 			before := businessHits.Load()
 			r, _ := http.NewRequest(tc.method, "https://"+address+tc.path, nil)
 			r.Host = "login.example.com"
-			r.AddCookie(&http.Cookie{Name: g.cookieName("session"), Value: token})
+			if !strings.HasPrefix(tc.name, "DingTalk") {
+				r.AddCookie(&http.Cookie{Name: g.cookieName("session"), Value: token})
+			}
 			for _, name := range []string{"X-Auth-User", "X-Forwarded-User", "X-Auth-Role", "X-User-Mail", "X-Porter-User-ID", "Authorization", "X-Stargate-Header-Auth", "Stargate-Password", "X-Forwarded-Uri", "X-Forwarded-Method", "X-Forwarded-Host", "X-Forwarded-Proto"} {
 				r.Header.Set(name, "attacker")
 			}

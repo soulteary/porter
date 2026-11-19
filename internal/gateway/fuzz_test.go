@@ -86,7 +86,8 @@ func FuzzCallbackSingleUse(f *testing.F) {
 			t.Fatal("callback replayed an authorization exchange")
 		}
 		parsed, err := url.ParseQuery(query)
-		eligible := err == nil && bound && len(parsed["state"]) == 1 && parsed.Get("state") == state && len(parsed["code"]) == 1 && parsed.Get("code") != "" && len(parsed.Get("code")) <= 4096 && len(parsed["error"]) <= 1 && parsed.Get("error") == ""
+		_, mixed := parsed["authCode"]
+		eligible := !mixed && err == nil && bound && len(parsed["state"]) == 1 && parsed.Get("state") == state && len(parsed["code"]) == 1 && parsed.Get("code") != "" && len(parsed.Get("code")) <= 4096 && len(parsed["error"]) <= 1 && parsed.Get("error") == ""
 		if eligible && (first.Code != 303 || adapter.calls != 1) {
 			t.Fatal("valid bound callback did not issue exactly one session")
 		}

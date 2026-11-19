@@ -45,6 +45,9 @@ func New(ctx context.Context, name string, p config.Provider, callback string, c
 		copy.Timeout = 10 * time.Second
 	}
 	client = &copy
+	if name == "dingtalk" {
+		return newDingTalk(p.ClientID, p.ClientSecret, callback, client), nil
+	}
 	a := &OAuth{Name: name, Client: client, ExchangeClient: outbound.Exchange(client), Config: oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: callback}}
 	switch name {
 	case "github":
